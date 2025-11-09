@@ -7,6 +7,7 @@ Tools:
 - distance_matrix: Calculate distances between multiple origin-destination pairs
 - nearby_search: Find nearby places from a single location
 - batch_nearby_search: Find nearby places from multiple locations in parallel (optimized)
+- list_place_types: Discover valid Google Place types by category
 """
 
 import asyncio
@@ -26,6 +27,12 @@ from .models import (
 from .google_client import GooglePlacesClient
 from .cache import get_cache_stats
 from .utils import filter_place_fields
+from .place_types import (
+    PLACE_TYPES_BY_CATEGORY,
+    ALL_PLACE_TYPES,
+    validate_place_types,
+    get_category_for_type,
+)
 
 # Load environment variables
 load_dotenv()
@@ -152,10 +159,42 @@ async def nearby_search(
     Available include_fields:
         rating, user_ratings_total, address, phone_number, website, price_level,
         opening_hours, types
+
+    Note:
+        Use list_place_types() to discover valid place types before searching.
+        Invalid types will return helpful suggestions for corrections.
     """
     client = get_google_client()
 
     try:
+        # Validate place types and collect warnings
+        validation = validate_place_types(feature_types)
+        warnings = []
+
+        if not validation["all_valid"]:
+            # Build helpful warning messages
+            for invalid_type in validation["invalid"]:
+                suggestions = validation["suggestions"].get(invalid_type, [])
+                if suggestions:
+                    suggestion_str = ", ".join(suggestions[:3])
+                    warnings.append(
+                        f"'{invalid_type}' is not a valid place type. Did you mean: {suggestion_str}?"
+                    )
+                else:
+                    warnings.append(
+                        f"'{invalid_type}' is not a valid place type. Use list_place_types() to see valid options."
+                    )
+
+        # Use only valid types for the search
+        valid_types = validation["valid"]
+
+        if not valid_types:
+            return {
+                "error": "No valid place types provided",
+                "warnings": warnings,
+                "features": {},
+            }
+
         # Geocode if address provided
         if location.address:
             coords = await client.geocode_location(location.address)
@@ -165,7 +204,7 @@ async def nearby_search(
 
         # Search for each feature type in parallel
         tasks = []
-        for feature_type in feature_types:
+        for feature_type in valid_types:
             task = client.nearby_search(lat, lng, feature_type, radius_meters, max_results_per_type)
             tasks.append(task)
 
@@ -175,7 +214,7 @@ async def nearby_search(
         features_dict = {}
         total_places = 0
 
-        for feature_type, result in zip(feature_types, results):
+        for feature_type, result in zip(valid_types, results):
             if isinstance(result, Exception):
                 features_dict[feature_type] = {"error": str(result), "places": []}
             else:
@@ -184,15 +223,21 @@ async def nearby_search(
                 features_dict[feature_type] = {"places": filtered_places}
                 total_places += len(filtered_places)
 
-        return {
+        response = {
             "location": {"lat": lat, "lng": lng},
             "features": features_dict,
             "summary": {
-                "total_feature_types": len(feature_types),
+                "total_feature_types": len(valid_types),
                 "total_places_found": total_places,
                 "radius_meters": radius_meters,
             },
         }
+
+        # Add warnings if there were invalid types
+        if warnings:
+            response["warnings"] = warnings
+
+        return response
 
     except Exception as e:
         return {"error": str(e), "features": {}}
@@ -235,14 +280,47 @@ async def batch_nearby_search(
     Available include_fields:
         rating, user_ratings_total, address, phone_number, website, price_level,
         opening_hours, types
+
+    Note:
+        Use list_place_types() to discover valid place types before searching.
+        Invalid types will return helpful suggestions for corrections.
     """
     client = get_google_client()
 
-    # Reset API call counter
-    client.reset_api_call_count()
+    # Validate place types and collect warnings
+    validation = validate_place_types(feature_types)
+    warnings = []
 
-    # Get initial cache stats
-    initial_cache_stats = get_cache_stats()
+    if not validation["all_valid"]:
+        # Build helpful warning messages
+        for invalid_type in validation["invalid"]:
+            suggestions = validation["suggestions"].get(invalid_type, [])
+            if suggestions:
+                suggestion_str = ", ".join(suggestions[:3])
+                warnings.append(
+                    f"'{invalid_type}' is not a valid place type. Did you mean: {suggestion_str}?"
+                )
+            else:
+                warnings.append(
+                    f"'{invalid_type}' is not a valid place type. Use list_place_types() to see valid options."
+                )
+
+    # Use only valid types for the search
+    valid_types = validation["valid"]
+
+    if not valid_types:
+        return {
+            "error": "No valid place types provided",
+            "warnings": warnings,
+            "results": [],
+            "summary": {
+                "total_locations": len(locations),
+                "successful": 0,
+                "partial": 0,
+                "failed": len(locations),
+                "total_places_found": 0,
+            },
+        }
 
     location_results = []
     total_places_found = 0
@@ -275,7 +353,7 @@ async def batch_nearby_search(
         # Step 3: Batch nearby search for all locations × feature types
         batch_results = await client.batch_nearby_search(
             [c for c in coords_list if "error" not in c],
-            feature_types,
+            valid_types,
             radius_meters,
             max_results_per_type,
         )
@@ -327,18 +405,25 @@ async def batch_nearby_search(
 
             location_results.append(loc_data)
 
-        return {
+        response = {
             "results": location_results,
             "summary": {
                 "total_locations": len(locations),
                 "successful": successful,
                 "partial": partial,
                 "failed": failed,
-                "total_places_found": total_places_found            },
+                "total_places_found": total_places_found,
+            },
         }
 
+        # Add warnings if there were invalid types
+        if warnings:
+            response["warnings"] = warnings
+
+        return response
+
     except Exception as e:
-        return {
+        error_response = {
             "error": str(e),
             "results": location_results,
             "summary": {
@@ -348,6 +433,75 @@ async def batch_nearby_search(
                 "failed": failed,
                 "total_places_found": total_places_found,
             },
+        }
+
+        # Add warnings even in error case
+        if warnings:
+            error_response["warnings"] = warnings
+
+        return error_response
+
+
+@mcp.tool
+async def list_place_types(category: str | None = None) -> dict:
+    """
+    Get all valid Google Place types, optionally filtered by category.
+
+    Use this tool to discover valid place types before making search requests.
+    This helps avoid typos and ensures you're using the correct type names.
+
+    Args:
+        category: Optional category to filter by. Available categories:
+            - automotive (car dealers, gas stations, parking, etc.)
+            - business (corporate offices, farms, ranches)
+            - culture (museums, galleries, monuments, etc.)
+            - education (schools, libraries, universities)
+            - entertainment_recreation (parks, theaters, zoos, etc.)
+            - facilities (public baths, stables, etc.)
+            - finance (banks, ATMs, accounting)
+            - food_drink (restaurants, cafes, bars, etc.)
+            - government (city hall, police, post office, etc.)
+            - health_wellness (hospitals, pharmacies, doctors, etc.)
+            - lodging (hotels, hostels, campgrounds, etc.)
+            - places_of_worship (churches, temples, mosques, etc.)
+            - services (salons, lawyers, florists, etc.)
+            - shopping (stores, malls, supermarkets, etc.)
+            - sports (gyms, stadiums, golf courses, etc.)
+            - transportation (airports, train stations, bus stops, etc.)
+
+    Returns:
+        Dictionary of place types by category, or all types if no category specified
+
+    Example:
+        list_place_types(category="food_drink")
+        # Returns: {"food_drink": ["restaurant", "cafe", "bar", ...]}
+
+        list_place_types()
+        # Returns: {"automotive": [...], "business": [...], ...}
+    """
+    if category:
+        # Normalize category name
+        category = category.lower().strip()
+
+        if category in PLACE_TYPES_BY_CATEGORY:
+            return {
+                "category": category,
+                "types": PLACE_TYPES_BY_CATEGORY[category],
+                "count": len(PLACE_TYPES_BY_CATEGORY[category]),
+            }
+        else:
+            # Provide helpful error with available categories
+            available = list(PLACE_TYPES_BY_CATEGORY.keys())
+            return {
+                "error": f"Unknown category '{category}'",
+                "available_categories": available,
+            }
+    else:
+        # Return all types organized by category
+        return {
+            "categories": PLACE_TYPES_BY_CATEGORY,
+            "total_categories": len(PLACE_TYPES_BY_CATEGORY),
+            "total_types": len(ALL_PLACE_TYPES),
         }
 
 
