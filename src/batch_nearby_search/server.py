@@ -209,15 +209,7 @@ async def batch_nearby_search(
     """
     Find nearby places for MULTIPLE locations in parallel - OPTIMIZED for batch operations.
 
-    This is the PRIMARY OPTIMIZATION tool. It searches for multiple feature types across
-    multiple locations concurrently, reducing total query time from O(N×M) sequential to
-    O(N×M) parallelized. Includes intelligent caching to minimize API costs.
-
-    Key benefits:
-    - Parallel API calls (10x+ faster than sequential)
-    - Intelligent caching (50-80% cost reduction on repeated queries)
-    - Partial failure handling (returns results for successful locations)
-    - Structured output for easy comparison
+    It searches for multiple feature types across multiple locations concurrently.
 
     Args:
         locations: List of search origins (max 20) - provide address OR coordinates
@@ -243,10 +235,6 @@ async def batch_nearby_search(
     Available include_fields:
         rating, user_ratings_total, address, phone_number, website, price_level,
         opening_hours, types
-
-    Performance note:
-        - 5 locations × 3 features = 15 API calls in parallel (~3-5 seconds)
-        - With caching: Repeated queries may use 0 API calls
     """
     client = get_google_client()
 
@@ -339,15 +327,6 @@ async def batch_nearby_search(
 
             location_results.append(loc_data)
 
-        # Get final cache stats
-        final_cache_stats = get_cache_stats()
-
-        # Calculate cache hits during this operation
-        cache_hits = (
-            final_cache_stats["geocoding"]["hits"] - initial_cache_stats["geocoding"]["hits"]
-            + final_cache_stats["places"]["hits"] - initial_cache_stats["places"]["hits"]
-        )
-
         return {
             "results": location_results,
             "summary": {
@@ -355,11 +334,7 @@ async def batch_nearby_search(
                 "successful": successful,
                 "partial": partial,
                 "failed": failed,
-                "total_places_found": total_places_found,
-                "total_api_calls": client.get_api_call_count(),
-                "cache_hits": cache_hits,
-                "estimated_cost_usd": round(client.get_api_call_count() * 0.032, 2),
-            },
+                "total_places_found": total_places_found            },
         }
 
     except Exception as e:
@@ -374,33 +349,6 @@ async def batch_nearby_search(
                 "total_places_found": total_places_found,
             },
         }
-
-
-@mcp.tool
-async def get_cache_statistics() -> dict:
-    """
-    Get caching statistics to monitor performance and cost savings.
-
-    Returns:
-        Cache hit/miss rates and sizes for geocoding and places caches
-
-    Example output:
-        {
-            "geocoding": {
-                "hits": 45,
-                "misses": 10,
-                "hit_rate": 0.82,
-                "cache_size": 42
-            },
-            "places": {
-                "hits": 123,
-                "misses": 34,
-                "hit_rate": 0.78,
-                "cache_size": 156
-            }
-        }
-    """
-    return get_cache_stats()
 
 
 def main():

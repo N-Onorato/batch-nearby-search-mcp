@@ -7,10 +7,9 @@
 
 ## Project Overview
 
-**Purpose**: Optimized MCP server for batch nearby searches using Google Places API
-**Language**: Python 3.10+
-**Framework**: FastMCP
-**Key optimization**: Parallel API calls + caching (50-80% cost reduction)
+**Purpose**: Optimized MCP server for batch nearby searches using Google Places
+API **Language**: Python 3.10+ **Framework**: FastMCP **Key optimization**:
+Parallel API calls + caching (50-80% cost reduction)
 
 ---
 
@@ -42,6 +41,7 @@ Documentation:
 ### 1. Pydantic Models (models.py)
 
 **Location input** - Accept either address OR coordinates:
+
 ```python
 class Location(BaseModel):
     address: str | None = None
@@ -56,6 +56,7 @@ class Location(BaseModel):
 ```
 
 **Field filtering** - Optional fields based on user request:
+
 ```python
 class PlaceResult(BaseModel):
     # Always included (minimal)
@@ -71,6 +72,7 @@ class PlaceResult(BaseModel):
 ```
 
 **Input validation** - Use Field for constraints:
+
 ```python
 class BatchRequest(BaseModel):
     locations: list[Location] = Field(..., max_length=20)  # Max 20 locations
@@ -82,6 +84,7 @@ class BatchRequest(BaseModel):
 ### 2. FastMCP Tools (server.py)
 
 **Tool decorator pattern**:
+
 ```python
 from fastmcp import FastMCP
 
@@ -110,6 +113,7 @@ async def batch_nearby_search(
 ```
 
 **Error handling** - Return partial results, don't fail completely:
+
 ```python
 results = {}
 for i, location in enumerate(locations):
@@ -124,6 +128,7 @@ return {"results": results, "summary": {...}}
 ### 3. Async Google API Client (google_client.py)
 
 **Rate limiting with semaphore**:
+
 ```python
 class GooglePlacesClient:
     def __init__(self, api_key: str, max_concurrent: int = 10):
@@ -137,6 +142,7 @@ class GooglePlacesClient:
 ```
 
 **Parallel execution pattern**:
+
 ```python
 async def batch_search(self, locations, feature_types):
     tasks = []
@@ -152,6 +158,7 @@ async def batch_search(self, locations, feature_types):
 ### 4. Caching (cache.py)
 
 **Two-tier caching strategy**:
+
 ```python
 from cachetools import LRUCache, TTLCache
 from functools import wraps
@@ -174,6 +181,7 @@ def cache_geocoding(func):
 ```
 
 **Cache key generation**:
+
 ```python
 def make_cache_key(location: Location, feature_type: str, radius: int) -> str:
     """Create consistent cache key"""
@@ -186,6 +194,7 @@ def make_cache_key(location: Location, feature_type: str, radius: int) -> str:
 ### 5. Field Filtering (utils.py)
 
 **Extract only requested fields**:
+
 ```python
 def filter_place_fields(place: dict, include_fields: list[str] | None) -> dict:
     """Extract only requested fields from Google API response"""
@@ -222,6 +231,7 @@ def filter_place_fields(place: dict, include_fields: list[str] | None) -> dict:
 ## Important Commands
 
 ### Setup
+
 ```bash
 # Install dependencies (using uv - recommended)
 uv pip install -e ".[dev]"
@@ -237,6 +247,7 @@ cp .env.example .env
 ### Running the Server
 
 **For Claude Desktop**:
+
 ```bash
 # Start server (stdio transport)
 uv run batch-nearby-search
@@ -246,6 +257,7 @@ python -m batch_nearby_search.server
 ```
 
 **Testing locally**:
+
 ```bash
 # Run tests
 pytest
@@ -266,24 +278,25 @@ ruff check src/ tests/
 
 ```json
 {
-  "mcpServers": {
-    "batch-nearby-search": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/absolute/path/to/batch-nearby-search-mcp",
-        "run",
-        "batch-nearby-search"
-      ],
-      "env": {
-        "GOOGLE_MAPS_API_KEY": "your-key-here"
-      }
+    "mcpServers": {
+        "batch-nearby-search": {
+            "command": "uv",
+            "args": [
+                "--directory",
+                "/absolute/path/to/batch-nearby-search-mcp",
+                "run",
+                "batch-nearby-search"
+            ],
+            "env": {
+                "GOOGLE_MAPS_API_KEY": "your-key-here"
+            }
+        }
     }
-  }
 }
 ```
 
 After updating config:
+
 1. Save the file
 2. Restart Claude Desktop completely
 3. Check for the MCP icon to verify connection
@@ -293,13 +306,17 @@ After updating config:
 ## Google API Reference
 
 ### Required APIs
+
 Enable these in Google Cloud Console:
+
 1. **Places API (New)** - For nearby searches
 2. **Distance Matrix API** - For distance calculations
 3. **Geocoding API** - For address → coordinates
 
 ### Place Types (feature_types)
+
 Common types to use:
+
 ```python
 amenities = ["park", "gym", "library", "hospital"]
 food = ["restaurant", "cafe", "grocery_store", "supermarket"]
@@ -307,63 +324,8 @@ transit = ["bus_station", "subway_station", "train_station"]
 services = ["atm", "bank", "pharmacy", "gas_station"]
 ```
 
-Full list: https://developers.google.com/maps/documentation/places/web-service/supported_types
-
-### API Costs (as of 2024)
-- **Nearby Search**: $32 per 1000 requests (Basic), $40 (Advanced with details)
-- **Distance Matrix**: $5 per 1000 elements (up to 25 origins × 25 destinations)
-- **Geocoding**: $5 per 1000 requests
-
-**Cost optimization via caching**:
-- Without cache: 100 queries = $3.20
-- With cache (80% hit rate): 100 queries = $0.64 (80% savings)
-
----
-
-## Common Issues & Solutions
-
-### Issue: "API key not valid"
-**Solution**:
-1. Check `.env` file has correct key
-2. Enable required APIs in Google Cloud Console
-3. Check billing is enabled for the project
-
-### Issue: "Too many concurrent requests"
-**Solution**: Reduce `MAX_CONCURRENT_REQUESTS` in `.env` (default 10)
-
-### Issue: "No results found"
-**Solution**:
-1. Check radius (might be too small)
-2. Verify feature_type is a valid Google place type
-3. Try broader types (e.g., "restaurant" instead of "sushi_restaurant")
-
-### Issue: Claude Desktop not showing tools
-**Solution**:
-1. Check config file path is correct
-2. Verify JSON syntax (no trailing commas)
-3. Check logs: `tail -f ~/Library/Logs/Claude/mcp*.log` (macOS)
-4. Restart Claude Desktop completely
-
----
-
-## Performance Guidelines
-
-### Batch Size Recommendations
-- **Optimal**: 5-15 locations × 2-5 feature types
-- **Maximum**: 20 locations × 10 feature types (API rate limits)
-- **Warning**: 20 × 10 = 200 API calls (cost: ~$6.40)
-
-### Caching Strategy
-- **Geocoding**: Cached indefinitely (addresses don't move)
-- **Places**: 1-hour TTL (balances freshness vs. cost)
-- **Custom TTL**: Set via `PLACES_CACHE_TTL` env var
-
-### Rate Limiting
-- **Default**: 10 concurrent requests
-- **Conservative**: 5 (for free tier / low quotas)
-- **Aggressive**: 50 (for premium tier with high quotas)
-
----
+Full list:
+https://developers.google.com/maps/documentation/places/web-service/supported_types
 
 ## Testing Locations (For Development)
 
@@ -376,18 +338,3 @@ test_locations = [
 
 test_features = ["park", "cafe", "gym"]
 ```
-
----
-
-## Version History
-
-**v0.1.0** (Initial)
-- Three tools: distance_matrix, nearby_search, batch_nearby_search
-- Concurrent API calls with rate limiting
-- Two-tier caching (geocoding + places)
-- Optional field selection
-- Claude Desktop integration
-
----
-
-**End of CLAUDE.md** (297 lines)
