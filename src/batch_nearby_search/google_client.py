@@ -1,11 +1,15 @@
 """
 Google Maps API client wrapper with async support, caching, and rate limiting.
+
+Now uses the NEW Google Places API (places.googleapis.com/v1) for nearby searches,
+which supports modern place types like "fast_food_restaurant", "grocery_store", etc.
 """
 
 import asyncio
 import os
 from typing import Any
 import googlemaps
+import httpx
 from googlemaps.exceptions import ApiError, Timeout, TransportError
 
 from .cache import (
@@ -23,6 +27,8 @@ class GooglePlacesClient:
     - Rate limiting (semaphore-based)
     - Caching (geocoding and places)
     - Error handling and retries
+
+    Uses NEW Places API for nearby searches and legacy API for geocoding.
     """
 
     def __init__(self, api_key: str | None = None, max_concurrent: int = 10):
@@ -37,9 +43,17 @@ class GooglePlacesClient:
         if not self.api_key:
             raise ValueError("Google Maps API key required (set GOOGLE_MAPS_API_KEY env var)")
 
+        # Legacy client for geocoding and distance matrix
         self.client = googlemaps.Client(key=self.api_key)
+
+        # HTTP client for new Places API
+        self.http_client = httpx.AsyncClient()
+
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.api_call_count = 0
+
+        # New Places API endpoint
+        self.places_api_url = "https://places.googleapis.com/v1/places:searchNearby"
 
     async def _rate_limited_call(self, func, *args, **kwargs):
         """
@@ -105,12 +119,15 @@ class GooglePlacesClient:
         """
         Search for nearby places of a specific type with caching.
 
+        Uses the NEW Google Places API (places.googleapis.com/v1) which supports
+        modern place types like "fast_food_restaurant", "grocery_store", etc.
+
         Args:
             lat: Latitude
             lng: Longitude
-            feature_type: Place type (e.g., "park", "restaurant")
+            feature_type: Place type (e.g., "park", "fast_food_restaurant", "grocery_store")
             radius: Search radius in meters
-            max_results: Maximum number of results to return
+            max_results: Maximum number of results to return (1-20)
 
         Returns:
             List of place dicts with distance_meters added
@@ -123,32 +140,96 @@ class GooglePlacesClient:
         if cached:
             return cached[:max_results]
 
-        # Call Google Places API (Nearby Search)
+        # Call NEW Google Places API (Nearby Search)
         try:
-            result = await self._rate_limited_call(
-                self.client.places_nearby,
-                location=(lat, lng),
-                radius=radius,
-                type=feature_type,
-            )
+            async with self.semaphore:
+                # Build request body for new API
+                request_body = {
+                    "includedTypes": [feature_type],
+                    "maxResultCount": min(max_results, 20),  # API limit is 20
+                    "locationRestriction": {
+                        "circle": {
+                            "center": {
+                                "latitude": lat,
+                                "longitude": lng
+                            },
+                            "radius": float(radius)
+                        }
+                    },
+                    "rankPreference": "DISTANCE"  # Sort by distance
+                }
 
-            places = result.get("results", [])
+                # Set headers
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": self.api_key,
+                    "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.nationalPhoneNumber,places.websiteUri,places.priceLevel,places.currentOpeningHours,places.types,places.id"
+                }
 
-            # Calculate and add distance to each place
-            for place in places:
-                place_lat = place["geometry"]["location"]["lat"]
-                place_lng = place["geometry"]["location"]["lng"]
-                place["distance_meters"] = calculate_distance(lat, lng, place_lat, place_lng)
+                # Make POST request
+                response = await self.http_client.post(
+                    self.places_api_url,
+                    json=request_body,
+                    headers=headers,
+                    timeout=30.0
+                )
 
-            # Sort by distance
-            places.sort(key=lambda p: p.get("distance_meters", float("inf")))
+                self.api_call_count += 1
 
-            # Cache the full results
-            set_places_cache(lat, lng, feature_type, radius, places)
+                # Check for errors
+                if response.status_code != 200:
+                    error_detail = response.text
+                    raise ValueError(f"Places API error ({response.status_code}): {error_detail}")
 
-            return places[:max_results]
+                result = response.json()
+                places_raw = result.get("places", [])
 
-        except (ApiError, Timeout, TransportError) as e:
+                # Transform new API response to legacy format for compatibility
+                places = []
+                for place_data in places_raw:
+                    # Extract location
+                    location = place_data.get("location", {})
+                    place_lat = location.get("latitude")
+                    place_lng = location.get("longitude")
+
+                    if place_lat is None or place_lng is None:
+                        continue
+
+                    # Calculate distance
+                    distance = calculate_distance(lat, lng, place_lat, place_lng)
+
+                    # Transform to legacy-compatible format
+                    transformed_place = {
+                        "name": place_data.get("displayName", {}).get("text", "Unknown"),
+                        "place_id": place_data.get("id", "").replace("places/", ""),  # Strip prefix
+                        "geometry": {
+                            "location": {
+                                "lat": place_lat,
+                                "lng": place_lng
+                            }
+                        },
+                        "distance_meters": distance,
+                        "vicinity": place_data.get("formattedAddress", ""),
+                        "rating": place_data.get("rating"),
+                        "user_ratings_total": place_data.get("userRatingCount"),
+                        "formatted_phone_number": place_data.get("nationalPhoneNumber"),
+                        "website": place_data.get("websiteUri"),
+                        "price_level": place_data.get("priceLevel"),
+                        "opening_hours": place_data.get("currentOpeningHours"),
+                        "types": place_data.get("types", [])
+                    }
+
+                    places.append(transformed_place)
+
+                # Already sorted by distance due to rankPreference
+                # Cache the full results
+                set_places_cache(lat, lng, feature_type, radius, places)
+
+                return places[:max_results]
+
+        except httpx.HTTPError as e:
+            raise ValueError(f"Places API HTTP error for {feature_type}: {str(e)}")
+        except Exception as e:
             raise ValueError(f"Places API error for {feature_type}: {str(e)}")
 
     async def batch_nearby_search(
