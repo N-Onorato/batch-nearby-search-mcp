@@ -123,7 +123,7 @@ class BatchNearbySearchRequest(BaseModel):
     """Request for batch nearby search"""
     locations: list[Location] = Field(..., max_length=20)
     feature_types: list[str] = Field(..., min_length=1, max_length=10)
-    radius_meters: int = Field(1500, ge=100, le=50000)
+    radius_meters: int = Field(5000, ge=100, le=50000)
     max_results_per_type: int = Field(3, ge=1, le=10)
     include_fields: list[str] | None = None
 ```
@@ -172,7 +172,7 @@ async def distance_matrix(
 async def nearby_search(
     location: Location,
     feature_types: list[str],
-    radius_meters: int = 1500,
+    radius_meters: int = 5000,
     max_results_per_type: int = 3,
     include_fields: list[str] | None = None
 ) -> dict:
@@ -194,7 +194,7 @@ async def nearby_search(
 async def batch_nearby_search(
     locations: list[Location],
     feature_types: list[str],
-    radius_meters: int = 1500,
+    radius_meters: int = 5000,
     max_results_per_type: int = 3,
     include_fields: list[str] | None = None
 ) -> dict:

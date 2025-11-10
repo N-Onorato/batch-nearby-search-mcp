@@ -77,7 +77,7 @@ class NearbySearchRequest(BaseModel):
         ..., min_length=1, max_length=10, description="Place types to search for"
     )
     radius_meters: int = Field(
-        1500, ge=100, le=50000, description="Search radius in meters (100m - 50km)"
+        5000, ge=100, le=50000, description="Search radius in meters (100m - 50km)"
     )
     max_results_per_type: int = Field(
         3, ge=1, le=10, description="Maximum results per feature type"
@@ -104,7 +104,7 @@ class BatchNearbySearchRequest(BaseModel):
         ..., min_length=1, max_length=10, description="Place types to search for"
     )
     radius_meters: int = Field(
-        1500, ge=100, le=50000, description="Search radius in meters (100m - 50km)"
+        5000, ge=100, le=50000, description="Search radius in meters (100m - 50km)"
     )
     max_results_per_type: int = Field(
         3, ge=1, le=10, description="Maximum results per feature type"
