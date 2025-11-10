@@ -26,7 +26,12 @@ from .models import (
 )
 from .google_client import GooglePlacesClient
 from .cache import get_cache_stats
-from .utils import filter_place_fields
+from .utils import (
+    filter_place_fields,
+    format_batch_search_results,
+    format_nearby_search_results,
+    format_distance_matrix_results,
+)
 from .place_types import (
     PLACE_TYPES_BY_CATEGORY,
     ALL_PLACE_TYPES,
@@ -58,6 +63,7 @@ async def distance_matrix(
     origins: list[str],
     destinations: list[str],
     mode: Literal["driving", "walking", "bicycling", "transit"] = "driving",
+    response_format: Literal["concise", "detailed"] = "concise",
 ) -> dict:
     """
     Calculate distances and travel times between multiple origin-destination pairs.
@@ -69,15 +75,17 @@ async def distance_matrix(
         origins: List of origin addresses (e.g., ["123 Main St, City, State"])
         destinations: List of destination addresses
         mode: Travel mode - driving, walking, bicycling, or transit
+        response_format: "concise" for human-readable summary (default), "detailed" for full structured data
 
     Returns:
-        Distance matrix with distances and durations for each origin-destination pair
+        Human-readable summary (concise mode) or full structured data (detailed mode)
 
     Example:
         distance_matrix(
             origins=["1600 Amphitheatre Parkway, Mountain View, CA"],
             destinations=["1 Apple Park Way, Cupertino, CA"],
-            mode="driving"
+            mode="driving",
+            response_format="concise"
         )
     """
     client = get_google_client()
@@ -112,7 +120,7 @@ async def distance_matrix(
                     }
                 )
 
-        return {
+        structured_data = {
             "results": parsed_results,
             "summary": {
                 "total_pairs": len(parsed_results),
@@ -121,8 +129,28 @@ async def distance_matrix(
             },
         }
 
+        # Return based on response_format
+        if response_format == "detailed":
+            return structured_data
+        else:
+            # Concise mode: return human-readable text + structured data
+            text_summary = format_distance_matrix_results(
+                parsed_results, structured_data["summary"]
+            )
+
+            return {
+                "text": text_summary,
+                "data": structured_data,
+            }
+
     except Exception as e:
-        return {"error": str(e), "results": []}
+        error_data = {"error": str(e), "results": []}
+
+        if response_format == "detailed":
+            return error_data
+        else:
+            error_text = f"Error: {str(e)}"
+            return {"text": error_text, "data": error_data}
 
 
 @mcp.tool
@@ -132,6 +160,7 @@ async def nearby_search(
     radius_meters: int = 5000,
     max_results_per_type: int = 3,
     include_fields: list[str] | None = None,
+    response_format: Literal["concise", "detailed"] = "concise",
 ) -> dict:
     """
     Find nearby places of multiple types from a single location.
@@ -145,15 +174,17 @@ async def nearby_search(
         radius_meters: Search radius in meters (100-50000, default 5000)
         max_results_per_type: Maximum results per feature type (1-10, default 3)
         include_fields: Optional fields to include (rating, address, phone_number, etc.)
+        response_format: "concise" for human-readable summary (default), "detailed" for full structured data
 
     Returns:
-        Nearby places grouped by feature type with optional details
+        Human-readable summary (concise mode) or full structured data (detailed mode)
 
     Example:
         nearby_search(
             location={"address": "123 Main St, City, State"},
             feature_types=["park", "cafe", "gym"],
-            include_fields=["rating", "address"]
+            include_fields=["rating", "address"],
+            response_format="concise"
         )
 
     Available include_fields:
@@ -189,11 +220,17 @@ async def nearby_search(
         valid_types = validation["valid"]
 
         if not valid_types:
-            return {
+            error_data = {
                 "error": "No valid place types provided",
                 "warnings": warnings,
                 "features": {},
             }
+
+            if response_format == "detailed":
+                return error_data
+            else:
+                error_text = "Error: No valid place types provided\n\n" + "\n".join(warnings)
+                return {"text": error_text, "data": error_data}
 
         # Geocode if address provided
         if location.address:
@@ -223,7 +260,7 @@ async def nearby_search(
                 features_dict[feature_type] = {"places": filtered_places}
                 total_places += len(filtered_places)
 
-        response = {
+        structured_data = {
             "location": {"lat": lat, "lng": lng},
             "features": features_dict,
             "summary": {
@@ -235,12 +272,34 @@ async def nearby_search(
 
         # Add warnings if there were invalid types
         if warnings:
-            response["warnings"] = warnings
+            structured_data["warnings"] = warnings
 
-        return response
+        # Return based on response_format
+        if response_format == "detailed":
+            return structured_data
+        else:
+            # Concise mode: return human-readable text + structured data
+            text_summary = format_nearby_search_results(
+                structured_data["location"], features_dict, structured_data["summary"]
+            )
+
+            # Add warnings to text if present
+            if warnings:
+                text_summary = "\n".join(warnings) + "\n\n" + text_summary
+
+            return {
+                "text": text_summary,
+                "data": structured_data,
+            }
 
     except Exception as e:
-        return {"error": str(e), "features": {}}
+        error_data = {"error": str(e), "features": {}}
+
+        if response_format == "detailed":
+            return error_data
+        else:
+            error_text = f"Error: {str(e)}"
+            return {"text": error_text, "data": error_data}
 
 
 @mcp.tool
@@ -250,6 +309,7 @@ async def batch_nearby_search(
     radius_meters: int = 5000,
     max_results_per_type: int = 3,
     include_fields: list[str] | None = None,
+    response_format: Literal["concise", "detailed"] = "concise",
 ) -> dict:
     """
     Find nearby places for MULTIPLE locations in parallel - OPTIMIZED for batch operations.
@@ -262,9 +322,10 @@ async def batch_nearby_search(
         radius_meters: Search radius in meters (100-50000, default 5000)
         max_results_per_type: Maximum results per feature type (1-10, default 3)
         include_fields: Optional fields to include (rating, address, phone_number, etc.)
+        response_format: "concise" for human-readable summary (default), "detailed" for full structured data
 
     Returns:
-        Results grouped by location with summary statistics
+        Human-readable summary (concise mode) or full structured data (detailed mode)
 
     Example:
         batch_nearby_search(
@@ -274,7 +335,8 @@ async def batch_nearby_search(
                 {"lat": 37.4220, "lng": -122.0841}
             ],
             feature_types=["park", "grocery_store", "gym"],
-            include_fields=["rating", "address", "distance_meters"]
+            include_fields=["rating", "address", "distance_meters"],
+            response_format="concise"
         )
 
     Available include_fields:
@@ -309,7 +371,7 @@ async def batch_nearby_search(
     valid_types = validation["valid"]
 
     if not valid_types:
-        return {
+        error_data = {
             "error": "No valid place types provided",
             "warnings": warnings,
             "results": [],
@@ -321,6 +383,12 @@ async def batch_nearby_search(
                 "total_places_found": 0,
             },
         }
+
+        if response_format == "detailed":
+            return error_data
+        else:
+            error_text = "Error: No valid place types provided\n\n" + "\n".join(warnings)
+            return {"text": error_text, "data": error_data}
 
     location_results = []
     total_places_found = 0
@@ -405,7 +473,8 @@ async def batch_nearby_search(
 
             location_results.append(loc_data)
 
-        response = {
+        # Build structured response
+        structured_data = {
             "results": location_results,
             "summary": {
                 "total_locations": len(locations),
@@ -418,12 +487,28 @@ async def batch_nearby_search(
 
         # Add warnings if there were invalid types
         if warnings:
-            response["warnings"] = warnings
+            structured_data["warnings"] = warnings
 
-        return response
+        # Return based on response_format
+        if response_format == "detailed":
+            return structured_data
+        else:
+            # Concise mode: return human-readable text + structured data
+            text_summary = format_batch_search_results(
+                location_results, structured_data["summary"]
+            )
+
+            # Add warnings to text if present
+            if warnings:
+                text_summary = "\n".join(warnings) + "\n\n" + text_summary
+
+            return {
+                "text": text_summary,
+                "data": structured_data,
+            }
 
     except Exception as e:
-        error_response = {
+        error_data = {
             "error": str(e),
             "results": location_results,
             "summary": {
@@ -437,9 +522,16 @@ async def batch_nearby_search(
 
         # Add warnings even in error case
         if warnings:
-            error_response["warnings"] = warnings
+            error_data["warnings"] = warnings
 
-        return error_response
+        # Return based on response_format
+        if response_format == "detailed":
+            return error_data
+        else:
+            error_text = f"Error: {str(e)}"
+            if warnings:
+                error_text = "\n".join(warnings) + "\n\n" + error_text
+            return {"text": error_text, "data": error_data}
 
 
 @mcp.tool
