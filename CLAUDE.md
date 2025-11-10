@@ -77,7 +77,7 @@ class PlaceResult(BaseModel):
 class BatchRequest(BaseModel):
     locations: list[Location] = Field(..., max_length=20)  # Max 20 locations
     feature_types: list[str] = Field(..., min_length=1, max_length=10)
-    radius_meters: int = Field(1500, ge=100, le=50000)  # 100m-50km
+    radius_meters: int = Field(5000, ge=100, le=50000)  # 100m-50km
     include_fields: list[str] | None = None
 ```
 
@@ -94,7 +94,7 @@ mcp = FastMCP("batch-nearby-search")
 async def batch_nearby_search(
     locations: list[Location],
     feature_types: list[str],
-    radius_meters: int = 1500,
+    radius_meters: int = 5000,
     include_fields: list[str] | None = None
 ) -> dict:
     """

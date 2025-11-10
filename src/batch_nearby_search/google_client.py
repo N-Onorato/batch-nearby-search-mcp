@@ -113,7 +113,7 @@ class GooglePlacesClient:
         lat: float,
         lng: float,
         feature_type: str,
-        radius: int = 1500,
+        radius: int = 5000,
         max_results: int = 3,
     ) -> list[dict]:
         """
@@ -236,7 +236,7 @@ class GooglePlacesClient:
         self,
         locations: list[dict],
         feature_types: list[str],
-        radius: int = 1500,
+        radius: int = 5000,
         max_results_per_type: int = 3,
     ) -> list[dict]:
         """

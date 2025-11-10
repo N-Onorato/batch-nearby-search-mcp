@@ -129,7 +129,7 @@ async def distance_matrix(
 async def nearby_search(
     location: Location,
     feature_types: list[str],
-    radius_meters: int = 1500,
+    radius_meters: int = 5000,
     max_results_per_type: int = 3,
     include_fields: list[str] | None = None,
 ) -> dict:
@@ -142,7 +142,7 @@ async def nearby_search(
     Args:
         location: Search origin - provide either address OR coordinates
         feature_types: List of place types (e.g., ["park", "gym", "grocery_store"])
-        radius_meters: Search radius in meters (100-50000, default 1500)
+        radius_meters: Search radius in meters (100-50000, default 5000)
         max_results_per_type: Maximum results per feature type (1-10, default 3)
         include_fields: Optional fields to include (rating, address, phone_number, etc.)
 
@@ -247,7 +247,7 @@ async def nearby_search(
 async def batch_nearby_search(
     locations: list[Location],
     feature_types: list[str],
-    radius_meters: int = 1500,
+    radius_meters: int = 5000,
     max_results_per_type: int = 3,
     include_fields: list[str] | None = None,
 ) -> dict:
@@ -259,7 +259,7 @@ async def batch_nearby_search(
     Args:
         locations: List of search origins (max 20) - provide address OR coordinates
         feature_types: List of place types (max 10, e.g., ["park", "gym", "grocery_store"])
-        radius_meters: Search radius in meters (100-50000, default 1500)
+        radius_meters: Search radius in meters (100-50000, default 5000)
         max_results_per_type: Maximum results per feature type (1-10, default 3)
         include_fields: Optional fields to include (rating, address, phone_number, etc.)
 
