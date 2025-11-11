@@ -108,6 +108,57 @@ class GooglePlacesClient:
         except (ApiError, Timeout, TransportError) as e:
             raise ValueError(f"Geocoding API error: {str(e)}")
 
+    async def reverse_geocode_location(self, lat: float, lng: float) -> dict:
+        """
+        Reverse geocode coordinates to address with caching.
+
+        Args:
+            lat: Latitude
+            lng: Longitude
+
+        Returns:
+            Dict with {formatted_address, lat, lng, place_id, address_components}
+
+        Raises:
+            ValueError: If reverse geocoding fails or coordinates invalid
+        """
+        from .cache import get_reverse_geocoding_cache, set_reverse_geocoding_cache
+
+        # Check cache first
+        cached = get_reverse_geocoding_cache(lat, lng)
+        if cached:
+            return cached
+
+        # Call Google Geocoding API with latlng parameter
+        try:
+            latlng = f"{lat},{lng}"
+            result = await self._rate_limited_call(self.client.reverse_geocode, (lat, lng))
+
+            if not result:
+                raise ValueError(f"No address found for coordinates: ({lat}, {lng})")
+
+            # Get the first (most specific) result
+            first_result = result[0]
+            formatted_address = first_result["formatted_address"]
+            place_id = first_result.get("place_id")
+            address_components = first_result.get("address_components", [])
+
+            response = {
+                "lat": lat,
+                "lng": lng,
+                "formatted_address": formatted_address,
+                "place_id": place_id,
+                "address_components": address_components,
+            }
+
+            # Cache the result
+            set_reverse_geocoding_cache(lat, lng, response)
+
+            return response
+
+        except (ApiError, Timeout, TransportError) as e:
+            raise ValueError(f"Reverse geocoding API error: {str(e)}")
+
     async def nearby_search(
         self,
         lat: float,
