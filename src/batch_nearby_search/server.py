@@ -13,6 +13,7 @@ Tools:
 """
 
 import asyncio
+import json
 import os
 from typing import Literal
 from dotenv import load_dotenv
@@ -642,9 +643,17 @@ async def geocode(
     """
     client = get_google_client()
 
-    # Handle single string input
+    # Handle single string input or JSON stringified array
     if isinstance(addresses, str):
-        addresses = [addresses]
+        # Check if it's a JSON stringified array
+        if addresses.strip().startswith('['):
+            try:
+                addresses = json.loads(addresses)
+            except json.JSONDecodeError:
+                # If parsing fails, treat as single address
+                addresses = [addresses]
+        else:
+            addresses = [addresses]
 
     results = []
     total_success = 0
@@ -751,7 +760,19 @@ async def reverse_geocode(
     """
     client = get_google_client()
 
-    # Handle single dict input
+    # Handle single dict input or JSON stringified array
+    if isinstance(coordinates, str):
+        # Check if it's a JSON stringified array or object
+        try:
+            coordinates = json.loads(coordinates)
+        except json.JSONDecodeError:
+            # If parsing fails, return error
+            return {
+                "error": "Invalid coordinates format. Must be a dict or list of dicts with {lat, lng}",
+                "results": [],
+                "summary": {"total_coordinates": 0, "successful": 0, "failed": 0},
+            } if format == "json" else "Error: Invalid coordinates format"
+
     if isinstance(coordinates, dict):
         coordinates = [coordinates]
 
