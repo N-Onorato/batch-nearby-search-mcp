@@ -93,28 +93,34 @@ mcp = FastMCP("batch-nearby-search")
 @mcp.tool
 async def batch_nearby_search(
     locations: list[Location],
-    feature_types: list[str],
+    feature_types: list[str] | str,  # Can be single string or list
     radius_meters: int = 5000,
-    include_fields: list[str] | None = None
-) -> dict:
+    include_fields: list[str] | None = None,
+    format: Literal["text", "json"] | None = None  # Output format
+) -> str | dict:
     """
     Docstring becomes tool description in MCP.
 
     Args:
         locations: List of addresses or coordinates
-        feature_types: Place types like ["park", "gym", "grocery_store"]
+        feature_types: Place types like ["park", "gym"] or categories like "food_drink"
         radius_meters: Search radius (100-50000)
         include_fields: Optional fields to include in results
+        format: "text" for log format (default), "json" for structured data
 
     Returns:
-        Structured results with per-location status and summary
+        Log-style text output (default) or structured JSON
     """
     # Implementation
 ```
 
-**Error handling** - Return partial results, don't fail completely:
+**Error handling & format support** - Return partial results, don't fail completely:
 
 ```python
+# Handle single string input
+if isinstance(feature_types, str):
+    feature_types = [feature_types]
+
 results = {}
 for i, location in enumerate(locations):
     try:
@@ -122,7 +128,13 @@ for i, location in enumerate(locations):
     except Exception as e:
         results[f"location_{i}"] = {"status": "error", "error": str(e)}
 
-return {"results": results, "summary": {...}}
+# Return based on format
+if format == "json":
+    return {"results": results, "summary": {...}}
+else:
+    # Text mode (default): log-style output
+    # Example: - 123 Main St (37.7, -122.4) "Starbucks" 250 meters [rating: 4.5]
+    return format_as_log(results)
 ```
 
 ### 3. Async Google API Client (google_client.py)

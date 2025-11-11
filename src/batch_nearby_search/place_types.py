@@ -297,12 +297,15 @@ def validate_place_types(place_types: list[str]) -> dict:
     """
     Validate a list of place types and return validation results.
 
+    Also supports category names - if a category name is provided (e.g., "food_drink"),
+    it will be expanded to all place types in that category.
+
     Args:
-        place_types: List of place types to validate
+        place_types: List of place types or category names to validate
 
     Returns:
         Dictionary with:
-        - valid: List of valid place types
+        - valid: List of valid place types (with categories expanded)
         - invalid: List of invalid place types
         - suggestions: Dict mapping invalid types to suggested corrections
         - all_valid: Boolean indicating if all types are valid
@@ -315,6 +318,14 @@ def validate_place_types(place_types: list[str]) -> dict:
             "suggestions": {"restraunt": ["restaurant", "fast_food_restaurant"]},
             "all_valid": False
         }
+
+        >>> validate_place_types(["food_drink"])
+        {
+            "valid": ["restaurant", "cafe", "bar", ...],  # All food_drink types
+            "invalid": [],
+            "suggestions": {},
+            "all_valid": True
+        }
     """
     valid = []
     invalid = []
@@ -323,8 +334,13 @@ def validate_place_types(place_types: list[str]) -> dict:
     for place_type in place_types:
         normalized = place_type.lower().strip()
 
+        # Check if it's a valid place type
         if normalized in ALL_PLACE_TYPES:
             valid.append(normalized)
+        # Check if it's a category name
+        elif normalized in PLACE_TYPES_BY_CATEGORY:
+            # Expand category to all its types
+            valid.extend(PLACE_TYPES_BY_CATEGORY[normalized])
         else:
             invalid.append(place_type)
             type_suggestions = suggest_place_types(normalized)
