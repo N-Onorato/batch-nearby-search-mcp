@@ -59,6 +59,31 @@ class PlaceResult(BaseModel):
         extra = "allow"  # Allow additional fields from Google API if needed
 
 
+class GeocodeResult(BaseModel):
+    """Result from geocoding an address to coordinates"""
+
+    address: str = Field(..., description="Original address queried")
+    formatted_address: str = Field(..., description="Formatted address from Google")
+    lat: float = Field(..., description="Latitude")
+    lng: float = Field(..., description="Longitude")
+    place_id: str | None = Field(None, description="Google Place ID")
+    address_components: list[dict] | None = Field(
+        None, description="Detailed address components (street, city, state, etc.)"
+    )
+
+
+class ReverseGeocodeResult(BaseModel):
+    """Result from reverse geocoding coordinates to address"""
+
+    lat: float = Field(..., description="Latitude queried")
+    lng: float = Field(..., description="Longitude queried")
+    formatted_address: str = Field(..., description="Formatted address from Google")
+    place_id: str | None = Field(None, description="Google Place ID")
+    address_components: list[dict] | None = Field(
+        None, description="Detailed address components (street, city, state, etc.)"
+    )
+
+
 class DistanceMatrixResult(BaseModel):
     """Result for a single origin-destination pair in distance matrix"""
 

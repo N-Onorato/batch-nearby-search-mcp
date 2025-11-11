@@ -288,3 +288,71 @@ def format_distance_matrix_results(results: list[dict], summary: dict) -> str:
             lines.append(f"- {origin} -> {destination} ERROR: {status}")
 
     return "\n".join(lines) if lines else "No routes found"
+
+
+def format_geocode_results(results: list[dict], summary: dict) -> str:
+    """
+    Format geocoding results in log-style output.
+
+    Each line shows: address -> (lat, lng)
+
+    Args:
+        results: List of geocoding results
+        summary: Summary statistics
+
+    Returns:
+        Log-style output with each geocoded address on a separate line
+    """
+    lines = []
+
+    for result in results:
+        address = result.get("address", "Unknown")
+        status = result.get("status", "success")
+
+        if status == "success":
+            formatted_address = result.get("formatted_address", "")
+            lat = result.get("lat")
+            lng = result.get("lng")
+
+            # Format: - "Original Address" -> "Formatted Address" (lat, lng)
+            if formatted_address and lat is not None and lng is not None:
+                lines.append(f'- "{address}" -> "{formatted_address}" ({lat:.4f}, {lng:.4f})')
+            else:
+                lines.append(f'- "{address}" ERROR: Missing coordinates')
+        else:
+            error = result.get("error", "Unknown error")
+            lines.append(f'- "{address}" ERROR: {error}')
+
+    return "\n".join(lines) if lines else "No addresses geocoded"
+
+
+def format_reverse_geocode_results(results: list[dict], summary: dict) -> str:
+    """
+    Format reverse geocoding results in log-style output.
+
+    Each line shows: (lat, lng) -> address
+
+    Args:
+        results: List of reverse geocoding results
+        summary: Summary statistics
+
+    Returns:
+        Log-style output with each reverse geocoded location on a separate line
+    """
+    lines = []
+
+    for result in results:
+        lat = result.get("lat")
+        lng = result.get("lng")
+        status = result.get("status", "success")
+
+        coord_str = f"({lat:.4f}, {lng:.4f})" if lat is not None and lng is not None else "(?, ?)"
+
+        if status == "success":
+            formatted_address = result.get("formatted_address", "Unknown")
+            lines.append(f'- {coord_str} -> "{formatted_address}"')
+        else:
+            error = result.get("error", "Unknown error")
+            lines.append(f"- {coord_str} ERROR: {error}")
+
+    return "\n".join(lines) if lines else "No locations reverse geocoded"

@@ -8,6 +8,8 @@ Tools:
 - nearby_search: Find nearby places from a single location
 - batch_nearby_search: Find nearby places from multiple locations in parallel (optimized)
 - list_place_types: Discover valid Google Place types by category
+- geocode: Convert addresses to coordinates (forward geocoding)
+- reverse_geocode: Convert coordinates to addresses (reverse geocoding)
 """
 
 import asyncio
@@ -31,6 +33,8 @@ from .utils import (
     format_batch_search_results,
     format_nearby_search_results,
     format_distance_matrix_results,
+    format_geocode_results,
+    format_reverse_geocode_results,
 )
 from .place_types import (
     PLACE_TYPES_BY_CATEGORY,
@@ -606,6 +610,249 @@ async def list_place_types(categories: list[str] | str | None = None) -> dict:
             "total_categories": len(PLACE_TYPES_BY_CATEGORY),
             "total_types": len(ALL_PLACE_TYPES),
         }
+
+
+@mcp.tool
+async def geocode(
+    addresses: list[str] | str,
+    include_components: bool = False,
+    format: Literal["text", "json"] | None = None,
+) -> str | dict:
+    """
+    Convert addresses to coordinates (forward geocoding).
+
+    Useful for looking up coordinates for addresses you want to use in nearby searches
+    or distance calculations. Supports batch geocoding of multiple addresses in parallel.
+    Results are cached to reduce API costs for repeated queries.
+
+    Args:
+        addresses: Single address string or list of addresses to geocode
+        include_components: Include detailed address components (street, city, state, etc.)
+        format: Output format - "text" for human-readable (default), "json" for structured data
+
+    Returns:
+        Human-readable log format (default) or JSON structured data
+
+    Example:
+        geocode(addresses="1600 Amphitheatre Parkway, Mountain View, CA")
+        # Returns: - "1600 Amphitheatre..." -> "1600 Amphitheatre Pkwy, Mountain View, CA 94043, USA" (37.4220, -122.0841)
+
+        geocode(addresses=["Times Square, NYC", "Golden Gate Bridge, SF"])
+        # Batch geocodes both addresses in parallel
+    """
+    client = get_google_client()
+
+    # Handle single string input
+    if isinstance(addresses, str):
+        addresses = [addresses]
+
+    results = []
+    total_success = 0
+    total_failed = 0
+
+    try:
+        # Geocode all addresses in parallel
+        geocode_tasks = []
+        for address in addresses:
+            geocode_tasks.append(client.geocode_location(address))
+
+        geocoded = await asyncio.gather(*geocode_tasks, return_exceptions=True)
+
+        # Process results
+        for i, result in enumerate(geocoded):
+            original_address = addresses[i]
+
+            if isinstance(result, Exception):
+                results.append({
+                    "address": original_address,
+                    "status": "error",
+                    "error": str(result),
+                })
+                total_failed += 1
+            else:
+                result_dict = {
+                    "address": original_address,
+                    "formatted_address": result["formatted_address"],
+                    "lat": result["lat"],
+                    "lng": result["lng"],
+                    "status": "success",
+                }
+
+                if include_components:
+                    # Fetch full details if components requested (not in cached response)
+                    result_dict["place_id"] = result.get("place_id")
+
+                results.append(result_dict)
+                total_success += 1
+
+        # Build structured response
+        structured_data = {
+            "results": results,
+            "summary": {
+                "total_addresses": len(addresses),
+                "successful": total_success,
+                "failed": total_failed,
+            },
+        }
+
+        # Return based on format
+        if format == "json":
+            return structured_data
+        else:
+            # Text mode (default): return human-readable log format
+            return format_geocode_results(results, structured_data["summary"])
+
+    except Exception as e:
+        error_data = {
+            "error": str(e),
+            "results": results,
+            "summary": {
+                "total_addresses": len(addresses),
+                "successful": total_success,
+                "failed": total_failed,
+            },
+        }
+
+        if format == "json":
+            return error_data
+        else:
+            return f"Error: {str(e)}"
+
+
+@mcp.tool
+async def reverse_geocode(
+    coordinates: list[dict] | dict,
+    include_components: bool = False,
+    format: Literal["text", "json"] | None = None,
+) -> str | dict:
+    """
+    Convert coordinates to addresses (reverse geocoding).
+
+    Useful for finding addresses for coordinates from GPS, maps, or other sources.
+    Supports batch reverse geocoding. Results are cached to reduce API costs.
+
+    Args:
+        coordinates: Single coordinate dict or list of dicts with {lat, lng}
+        include_components: Include detailed address components (street, city, state, etc.)
+        format: Output format - "text" for human-readable (default), "json" for structured data
+
+    Returns:
+        Human-readable log format (default) or JSON structured data
+
+    Example:
+        reverse_geocode(coordinates={"lat": 37.4220, "lng": -122.0841})
+        # Returns: - (37.4220, -122.0841) -> "1600 Amphitheatre Pkwy, Mountain View, CA 94043, USA"
+
+        reverse_geocode(coordinates=[
+            {"lat": 37.4220, "lng": -122.0841},
+            {"lat": 40.7580, "lng": -73.9855}
+        ])
+        # Batch reverse geocodes both locations in parallel
+    """
+    client = get_google_client()
+
+    # Handle single dict input
+    if isinstance(coordinates, dict):
+        coordinates = [coordinates]
+
+    results = []
+    total_success = 0
+    total_failed = 0
+
+    try:
+        # Validate and reverse geocode all coordinates in parallel
+        reverse_geocode_tasks = []
+        valid_coords = []
+
+        for coord in coordinates:
+            lat = coord.get("lat")
+            lng = coord.get("lng")
+
+            if lat is None or lng is None:
+                results.append({
+                    "lat": lat,
+                    "lng": lng,
+                    "status": "error",
+                    "error": "Missing lat or lng",
+                })
+                total_failed += 1
+            elif not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+                results.append({
+                    "lat": lat,
+                    "lng": lng,
+                    "status": "error",
+                    "error": "Invalid coordinates (lat must be -90 to 90, lng must be -180 to 180)",
+                })
+                total_failed += 1
+            else:
+                reverse_geocode_tasks.append(client.reverse_geocode_location(lat, lng))
+                valid_coords.append(coord)
+
+        # Execute all valid reverse geocoding tasks
+        if reverse_geocode_tasks:
+            geocoded = await asyncio.gather(*reverse_geocode_tasks, return_exceptions=True)
+
+            # Process results
+            for i, result in enumerate(geocoded):
+                original_coord = valid_coords[i]
+                lat = original_coord["lat"]
+                lng = original_coord["lng"]
+
+                if isinstance(result, Exception):
+                    results.append({
+                        "lat": lat,
+                        "lng": lng,
+                        "status": "error",
+                        "error": str(result),
+                    })
+                    total_failed += 1
+                else:
+                    result_dict = {
+                        "lat": lat,
+                        "lng": lng,
+                        "formatted_address": result["formatted_address"],
+                        "status": "success",
+                    }
+
+                    if include_components:
+                        result_dict["place_id"] = result.get("place_id")
+                        result_dict["address_components"] = result.get("address_components")
+
+                    results.append(result_dict)
+                    total_success += 1
+
+        # Build structured response
+        structured_data = {
+            "results": results,
+            "summary": {
+                "total_coordinates": len(coordinates),
+                "successful": total_success,
+                "failed": total_failed,
+            },
+        }
+
+        # Return based on format
+        if format == "json":
+            return structured_data
+        else:
+            # Text mode (default): return human-readable log format
+            return format_reverse_geocode_results(results, structured_data["summary"])
+
+    except Exception as e:
+        error_data = {
+            "error": str(e),
+            "results": results,
+            "summary": {
+                "total_coordinates": len(coordinates),
+                "successful": total_success,
+                "failed": total_failed,
+            },
+        }
+
+        if format == "json":
+            return error_data
+        else:
+            return f"Error: {str(e)}"
 
 
 def main():

@@ -114,6 +114,45 @@ def set_places_cache(lat: float, lng: float, feature_type: str, radius: int, pla
     places_cache[key] = places
 
 
+def get_reverse_geocoding_cache(lat: float, lng: float) -> dict | None:
+    """
+    Get reverse geocoding result from cache.
+
+    Args:
+        lat: Latitude
+        lng: Longitude
+
+    Returns:
+        Cached address dict or None if not cached
+    """
+    # Round coordinates to reduce cache misses from tiny differences
+    lat_rounded = round(lat, 4)  # ~11 meters precision
+    lng_rounded = round(lng, 4)
+    key = make_cache_key("reverse_geocode", lat_rounded, lng_rounded)
+
+    result = geocoding_cache.get(key)
+    if result:
+        cache_stats["geocoding_hits"] += 1
+    else:
+        cache_stats["geocoding_misses"] += 1
+    return result
+
+
+def set_reverse_geocoding_cache(lat: float, lng: float, address_data: dict) -> None:
+    """
+    Store reverse geocoding result in cache.
+
+    Args:
+        lat: Latitude
+        lng: Longitude
+        address_data: Dict with address information
+    """
+    lat_rounded = round(lat, 4)
+    lng_rounded = round(lng, 4)
+    key = make_cache_key("reverse_geocode", lat_rounded, lng_rounded)
+    geocoding_cache[key] = address_data
+
+
 def get_cache_stats() -> dict:
     """
     Get cache statistics.
