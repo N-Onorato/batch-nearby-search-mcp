@@ -143,72 +143,74 @@ def normalize_place_type(place_type: str) -> str:
 
 def format_batch_search_results(results: list[dict], summary: dict) -> str:
     """
-    Format batch search results in human-readable text.
+    Format batch search results in log-style output.
+
+    Each line shows: location, coordinates, place name, distance, and optional fields.
 
     Args:
         results: List of location results
         summary: Summary statistics
 
     Returns:
-        Human-readable summary string
+        Log-style output with each place on a separate line
     """
     lines = []
 
-    # Header with summary
-    total = summary.get("total_locations", 0)
-    successful = summary.get("successful", 0)
-    partial = summary.get("partial", 0)
-    failed = summary.get("failed", 0)
-    total_places = summary.get("total_places_found", 0)
-
-    if failed == 0:
-        lines.append(f"Found {total_places} places across {total} location(s)")
-    else:
-        lines.append(
-            f"Found {total_places} places across {successful + partial}/{total} location(s) "
-            f"({failed} failed)"
-        )
-    lines.append("")
-
-    # Per-location breakdown
+    # Iterate through each location
     for result in results:
-        loc_idx = result.get("location_index", "?")
         location = result.get("location", {})
         coords = result.get("coordinates", {})
         features = result.get("features", {})
-        status = result.get("status", "unknown")
 
-        # Location header
+        # Format location identifier
         if location.get("address"):
-            loc_str = f"Location {loc_idx + 1}: {location['address']}"
+            loc_str = location["address"]
         else:
-            loc_str = f"Location {loc_idx + 1}: ({coords.get('lat', '?')}, {coords.get('lng', '?')})"
+            loc_str = f"{location.get('lat', coords.get('lat', '?'))}, {location.get('lng', coords.get('lng', '?'))}"
 
-        # Count places by feature type
-        feature_counts = []
+        # Format coordinates
+        lat = coords.get("lat", location.get("lat", "?"))
+        lng = coords.get("lng", location.get("lng", "?"))
+        coord_str = f"({lat}, {lng})"
+
+        # Iterate through each feature type and place
         for feature_type, places in features.items():
-            count = len(places) if isinstance(places, list) else 0
-            if count > 0:
-                feature_counts.append(f"{count} {feature_type.replace('_', ' ')}")
+            if isinstance(places, list):
+                for place in places:
+                    name = place.get("name", "Unknown")
+                    distance = place.get("distance_meters")
 
-        if feature_counts:
-            lines.append(f"  {loc_str}: {', '.join(feature_counts)}")
-        else:
-            lines.append(f"  {loc_str}: No places found")
+                    # Build the log line: - <location> <coords> "<name>" <distance> meters
+                    line_parts = ["-", loc_str, coord_str, f'"{name}"']
+
+                    if distance is not None:
+                        line_parts.append(f"{int(distance)} meters")
+
+                    # Add optional fields if present
+                    if "rating" in place and place["rating"]:
+                        line_parts.append(f"[rating: {place['rating']:.1f}]")
+                    if "address" in place and place["address"]:
+                        line_parts.append(f"[addr: {place['address']}]")
+                    if "phone_number" in place and place["phone_number"]:
+                        line_parts.append(f"[tel: {place['phone_number']}]")
+
+                    lines.append(" ".join(line_parts))
 
         # Add errors if any
         if "errors" in result and result["errors"]:
             for error in result["errors"]:
-                lines.append(f"    ⚠ {error}")
+                lines.append(f"- {loc_str} {coord_str} ERROR: {error}")
 
-    return "\n".join(lines)
+    return "\n".join(lines) if lines else "No places found"
 
 
 def format_nearby_search_results(
     location: dict, features: dict, summary: dict
 ) -> str:
     """
-    Format nearby search results in human-readable text.
+    Format nearby search results in log-style output.
+
+    Each line shows: coordinates, place name, distance, and optional fields.
 
     Args:
         location: Location coordinates
@@ -216,64 +218,58 @@ def format_nearby_search_results(
         summary: Summary statistics
 
     Returns:
-        Human-readable summary string
+        Log-style output with each place on a separate line
     """
     lines = []
 
-    total_types = summary.get("total_feature_types", 0)
-    total_places = summary.get("total_places_found", 0)
-    radius = summary.get("radius_meters", 0)
+    # Format coordinates
+    lat = location.get("lat", "?")
+    lng = location.get("lng", "?")
+    coord_str = f"({lat}, {lng})"
 
-    # Header
-    lines.append(
-        f"Found {total_places} places of {total_types} type(s) "
-        f"within {format_distance(radius)}"
-    )
-    lines.append("")
-
-    # Per-feature breakdown
+    # Iterate through each feature type and place
     for feature_type, data in features.items():
         if isinstance(data, dict) and "places" in data:
             places = data["places"]
-            if places:
-                lines.append(f"{feature_type.replace('_', ' ').title()} ({len(places)}):")
-                for place in places[:3]:  # Show up to 3 places
-                    name = place.get("name", "Unknown")
-                    dist = place.get("distance_meters")
-                    rating = place.get("rating")
+            for place in places:
+                name = place.get("name", "Unknown")
+                distance = place.get("distance_meters")
 
-                    place_str = f"  • {name}"
-                    if dist:
-                        place_str += f" - {format_distance(dist)}"
-                    if rating:
-                        place_str += f" ⭐ {rating}"
+                # Build the log line: - <coords> "<name>" <distance> meters
+                line_parts = ["-", coord_str, f'"{name}"']
 
-                    lines.append(place_str)
+                if distance is not None:
+                    line_parts.append(f"{int(distance)} meters")
 
-                if len(places) > 3:
-                    lines.append(f"  ... and {len(places) - 3} more")
+                # Add optional fields if present
+                if "rating" in place and place["rating"]:
+                    line_parts.append(f"[rating: {place['rating']:.1f}]")
+                if "address" in place and place["address"]:
+                    line_parts.append(f"[addr: {place['address']}]")
+                if "phone_number" in place and place["phone_number"]:
+                    line_parts.append(f"[tel: {place['phone_number']}]")
+
+                lines.append(" ".join(line_parts))
         elif isinstance(data, dict) and "error" in data:
-            lines.append(f"{feature_type.replace('_', ' ').title()}: ⚠ {data['error']}")
+            lines.append(f"- {coord_str} ERROR: {data['error']}")
 
-    return "\n".join(lines)
+    return "\n".join(lines) if lines else "No places found"
 
 
 def format_distance_matrix_results(results: list[dict], summary: dict) -> str:
     """
-    Format distance matrix results in human-readable text.
+    Format distance matrix results in log-style output.
+
+    Each line shows: origin -> destination, distance, duration.
 
     Args:
         results: List of origin-destination pairs
         summary: Summary statistics
 
     Returns:
-        Human-readable summary string
+        Log-style output with each route on a separate line
     """
     lines = []
-
-    mode = summary.get("mode", "driving")
-    lines.append(f"Distance Matrix Results (mode: {mode})")
-    lines.append("")
 
     for result in results:
         origin = result.get("origin", "Unknown")
@@ -284,10 +280,11 @@ def format_distance_matrix_results(results: list[dict], summary: dict) -> str:
 
         if status == "OK" and distance and duration:
             lines.append(
-                f"• {origin} → {destination}: "
-                f"{format_distance(distance)} ({format_duration(duration)})"
+                f"- {origin} -> {destination} "
+                f"{format_distance(distance)} "
+                f"{format_duration(duration)}"
             )
         else:
-            lines.append(f"• {origin} → {destination}: ⚠ {status}")
+            lines.append(f"- {origin} -> {destination} ERROR: {status}")
 
-    return "\n".join(lines)
+    return "\n".join(lines) if lines else "No routes found"

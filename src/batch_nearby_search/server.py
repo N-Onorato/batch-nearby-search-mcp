@@ -63,8 +63,8 @@ async def distance_matrix(
     origins: list[str],
     destinations: list[str],
     mode: Literal["driving", "walking", "bicycling", "transit"] = "driving",
-    response_format: Literal["concise", "detailed"] = "concise",
-) -> dict:
+    format: Literal["text", "json"] | None = None,
+) -> str | dict:
     """
     Calculate distances and travel times between multiple origin-destination pairs.
 
@@ -75,17 +75,16 @@ async def distance_matrix(
         origins: List of origin addresses (e.g., ["123 Main St, City, State"])
         destinations: List of destination addresses
         mode: Travel mode - driving, walking, bicycling, or transit
-        response_format: "concise" for human-readable summary (default), "detailed" for full structured data
+        format: Output format - "text" for human-readable (default), "json" for structured data
 
     Returns:
-        Human-readable summary (concise mode) or full structured data (detailed mode)
+        Human-readable log format (default) or JSON structured data
 
     Example:
         distance_matrix(
             origins=["1600 Amphitheatre Parkway, Mountain View, CA"],
             destinations=["1 Apple Park Way, Cupertino, CA"],
-            mode="driving",
-            response_format="concise"
+            mode="driving"
         )
     """
     client = get_google_client()
@@ -129,39 +128,33 @@ async def distance_matrix(
             },
         }
 
-        # Return based on response_format
-        if response_format == "detailed":
+        # Return based on format
+        if format == "json":
             return structured_data
         else:
-            # Concise mode: return human-readable text + structured data
-            text_summary = format_distance_matrix_results(
+            # Text mode (default): return human-readable log format
+            return format_distance_matrix_results(
                 parsed_results, structured_data["summary"]
             )
-
-            return {
-                "text": text_summary,
-                "data": structured_data,
-            }
 
     except Exception as e:
         error_data = {"error": str(e), "results": []}
 
-        if response_format == "detailed":
+        if format == "json":
             return error_data
         else:
-            error_text = f"Error: {str(e)}"
-            return {"text": error_text, "data": error_data}
+            return f"Error: {str(e)}"
 
 
 @mcp.tool
 async def nearby_search(
     location: Location,
-    feature_types: list[str],
+    feature_types: list[str] | str,
     radius_meters: int = 5000,
     max_results_per_type: int = 3,
     include_fields: list[str] | None = None,
-    response_format: Literal["concise", "detailed"] = "concise",
-) -> dict:
+    format: Literal["text", "json"] | None = None,
+) -> str | dict:
     """
     Find nearby places of multiple types from a single location.
 
@@ -170,21 +163,21 @@ async def nearby_search(
 
     Args:
         location: Search origin - provide either address OR coordinates
-        feature_types: List of place types (e.g., ["park", "gym", "grocery_store"])
+        feature_types: Place type(s) to search for. Can be a single string or list of strings.
+                      Also accepts category names (e.g., "food_drink", "sports") to search all types in that category.
         radius_meters: Search radius in meters (100-50000, default 5000)
         max_results_per_type: Maximum results per feature type (1-10, default 3)
         include_fields: Optional fields to include (rating, address, phone_number, etc.)
-        response_format: "concise" for human-readable summary (default), "detailed" for full structured data
+        format: Output format - "text" for human-readable (default), "json" for structured data
 
     Returns:
-        Human-readable summary (concise mode) or full structured data (detailed mode)
+        Human-readable log format (default) or JSON structured data
 
     Example:
         nearby_search(
             location={"address": "123 Main St, City, State"},
             feature_types=["park", "cafe", "gym"],
-            include_fields=["rating", "address"],
-            response_format="concise"
+            include_fields=["rating", "address"]
         )
 
     Available include_fields:
@@ -198,6 +191,10 @@ async def nearby_search(
     client = get_google_client()
 
     try:
+        # Handle single string input
+        if isinstance(feature_types, str):
+            feature_types = [feature_types]
+
         # Validate place types and collect warnings
         validation = validate_place_types(feature_types)
         warnings = []
@@ -220,17 +217,18 @@ async def nearby_search(
         valid_types = validation["valid"]
 
         if not valid_types:
-            error_data = {
-                "error": "No valid place types provided",
-                "warnings": warnings,
-                "features": {},
-            }
+            error_msg = "Error: No valid place types provided"
+            if warnings:
+                error_msg += "\n" + "\n".join(warnings)
 
-            if response_format == "detailed":
-                return error_data
+            if format == "json":
+                return {
+                    "error": "No valid place types provided",
+                    "warnings": warnings,
+                    "features": {},
+                }
             else:
-                error_text = "Error: No valid place types provided\n\n" + "\n".join(warnings)
-                return {"text": error_text, "data": error_data}
+                return error_msg
 
         # Geocode if address provided
         if location.address:
@@ -274,43 +272,37 @@ async def nearby_search(
         if warnings:
             structured_data["warnings"] = warnings
 
-        # Return based on response_format
-        if response_format == "detailed":
+        # Return based on format
+        if format == "json":
             return structured_data
         else:
-            # Concise mode: return human-readable text + structured data
-            text_summary = format_nearby_search_results(
+            # Text mode (default): return human-readable log format
+            text_output = format_nearby_search_results(
                 structured_data["location"], features_dict, structured_data["summary"]
             )
 
             # Add warnings to text if present
             if warnings:
-                text_summary = "\n".join(warnings) + "\n\n" + text_summary
+                text_output = "\n".join(warnings) + "\n\n" + text_output
 
-            return {
-                "text": text_summary,
-                "data": structured_data,
-            }
+            return text_output
 
     except Exception as e:
-        error_data = {"error": str(e), "features": {}}
-
-        if response_format == "detailed":
-            return error_data
+        if format == "json":
+            return {"error": str(e), "features": {}}
         else:
-            error_text = f"Error: {str(e)}"
-            return {"text": error_text, "data": error_data}
+            return f"Error: {str(e)}"
 
 
 @mcp.tool
 async def batch_nearby_search(
     locations: list[Location],
-    feature_types: list[str],
+    feature_types: list[str] | str,
     radius_meters: int = 5000,
     max_results_per_type: int = 3,
     include_fields: list[str] | None = None,
-    response_format: Literal["concise", "detailed"] = "concise",
-) -> dict:
+    format: Literal["text", "json"] | None = None,
+) -> str | dict:
     """
     Find nearby places for MULTIPLE locations in parallel - OPTIMIZED for batch operations.
 
@@ -318,14 +310,15 @@ async def batch_nearby_search(
 
     Args:
         locations: List of search origins (max 20) - provide address OR coordinates
-        feature_types: List of place types (max 10, e.g., ["park", "gym", "grocery_store"])
+        feature_types: Place type(s) to search for. Can be a single string or list of strings.
+                      Also accepts category names (e.g., "food_drink", "sports") to search all types in that category.
         radius_meters: Search radius in meters (100-50000, default 5000)
         max_results_per_type: Maximum results per feature type (1-10, default 3)
         include_fields: Optional fields to include (rating, address, phone_number, etc.)
-        response_format: "concise" for human-readable summary (default), "detailed" for full structured data
+        format: Output format - "text" for human-readable (default), "json" for structured data
 
     Returns:
-        Human-readable summary (concise mode) or full structured data (detailed mode)
+        Human-readable log format (default) or JSON structured data
 
     Example:
         batch_nearby_search(
@@ -335,8 +328,7 @@ async def batch_nearby_search(
                 {"lat": 37.4220, "lng": -122.0841}
             ],
             feature_types=["park", "grocery_store", "gym"],
-            include_fields=["rating", "address", "distance_meters"],
-            response_format="concise"
+            include_fields=["rating", "address"]
         )
 
     Available include_fields:
@@ -348,6 +340,10 @@ async def batch_nearby_search(
         Invalid types will return helpful suggestions for corrections.
     """
     client = get_google_client()
+
+    # Handle single string input
+    if isinstance(feature_types, str):
+        feature_types = [feature_types]
 
     # Validate place types and collect warnings
     validation = validate_place_types(feature_types)
@@ -371,24 +367,25 @@ async def batch_nearby_search(
     valid_types = validation["valid"]
 
     if not valid_types:
-        error_data = {
-            "error": "No valid place types provided",
-            "warnings": warnings,
-            "results": [],
-            "summary": {
-                "total_locations": len(locations),
-                "successful": 0,
-                "partial": 0,
-                "failed": len(locations),
-                "total_places_found": 0,
-            },
-        }
+        error_msg = "Error: No valid place types provided"
+        if warnings:
+            error_msg += "\n" + "\n".join(warnings)
 
-        if response_format == "detailed":
-            return error_data
+        if format == "json":
+            return {
+                "error": "No valid place types provided",
+                "warnings": warnings,
+                "results": [],
+                "summary": {
+                    "total_locations": len(locations),
+                    "successful": 0,
+                    "partial": 0,
+                    "failed": len(locations),
+                    "total_places_found": 0,
+                },
+            }
         else:
-            error_text = "Error: No valid place types provided\n\n" + "\n".join(warnings)
-            return {"text": error_text, "data": error_data}
+            return error_msg
 
     location_results = []
     total_places_found = 0
@@ -489,23 +486,20 @@ async def batch_nearby_search(
         if warnings:
             structured_data["warnings"] = warnings
 
-        # Return based on response_format
-        if response_format == "detailed":
+        # Return based on format
+        if format == "json":
             return structured_data
         else:
-            # Concise mode: return human-readable text + structured data
-            text_summary = format_batch_search_results(
+            # Text mode (default): return human-readable log format
+            text_output = format_batch_search_results(
                 location_results, structured_data["summary"]
             )
 
             # Add warnings to text if present
             if warnings:
-                text_summary = "\n".join(warnings) + "\n\n" + text_summary
+                text_output = "\n".join(warnings) + "\n\n" + text_output
 
-            return {
-                "text": text_summary,
-                "data": structured_data,
-            }
+            return text_output
 
     except Exception as e:
         error_data = {
@@ -524,18 +518,18 @@ async def batch_nearby_search(
         if warnings:
             error_data["warnings"] = warnings
 
-        # Return based on response_format
-        if response_format == "detailed":
+        # Return based on format
+        if format == "json":
             return error_data
         else:
             error_text = f"Error: {str(e)}"
             if warnings:
                 error_text = "\n".join(warnings) + "\n\n" + error_text
-            return {"text": error_text, "data": error_data}
+            return error_text
 
 
 @mcp.tool
-async def list_place_types(category: str | None = None) -> dict:
+async def list_place_types(categories: list[str] | str | None = None) -> dict:
     """
     Get all valid Google Place types, optionally filtered by category.
 
@@ -543,7 +537,8 @@ async def list_place_types(category: str | None = None) -> dict:
     This helps avoid typos and ensures you're using the correct type names.
 
     Args:
-        category: Optional category to filter by. Available categories:
+        categories: Optional category or list of categories to filter by. Can be a single string or list of strings.
+                   Available categories:
             - automotive (car dealers, gas stations, parking, etc.)
             - business (corporate offices, farms, ranches)
             - culture (museums, galleries, monuments, etc.)
@@ -565,28 +560,44 @@ async def list_place_types(category: str | None = None) -> dict:
         Dictionary of place types by category, or all types if no category specified
 
     Example:
-        list_place_types(category="food_drink")
+        list_place_types(categories="food_drink")
         # Returns: {"food_drink": ["restaurant", "cafe", "bar", ...]}
+
+        list_place_types(categories=["food_drink", "sports"])
+        # Returns: {"food_drink": [...], "sports": [...]}
 
         list_place_types()
         # Returns: {"automotive": [...], "business": [...], ...}
     """
-    if category:
-        # Normalize category name
-        category = category.lower().strip()
+    if categories:
+        # Handle single string input
+        if isinstance(categories, str):
+            categories = [categories]
 
-        if category in PLACE_TYPES_BY_CATEGORY:
-            return {
-                "category": category,
-                "types": PLACE_TYPES_BY_CATEGORY[category],
-                "count": len(PLACE_TYPES_BY_CATEGORY[category]),
-            }
-        else:
+        # Normalize category names
+        categories = [cat.lower().strip() for cat in categories]
+
+        result = {}
+        errors = []
+
+        for category in categories:
+            if category in PLACE_TYPES_BY_CATEGORY:
+                result[category] = PLACE_TYPES_BY_CATEGORY[category]
+            else:
+                errors.append(category)
+
+        if errors:
             # Provide helpful error with available categories
             available = list(PLACE_TYPES_BY_CATEGORY.keys())
             return {
-                "error": f"Unknown category '{category}'",
+                "error": f"Unknown categories: {', '.join(errors)}",
                 "available_categories": available,
+                "valid_results": result if result else None,
+            }
+        else:
+            return {
+                "categories": result,
+                "total_types": sum(len(types) for types in result.values()),
             }
     else:
         # Return all types organized by category

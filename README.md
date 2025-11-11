@@ -202,21 +202,40 @@ MAX_CONCURRENT_REQUESTS=10       # Default: 10 (recommended)
 
 ## Common Place Types
 
-Use these in `feature_types` parameters:
+Use these in `feature_types` parameters. You can specify individual place types or entire categories:
 
-**Amenities**: `park`, `gym`, `library`, `hospital`, `pharmacy`
+**Individual Place Types**:
+- **Amenities**: `park`, `gym`, `library`, `hospital`, `pharmacy`
+- **Food & Drink**: `restaurant`, `cafe`, `bar`, `grocery_store`, `supermarket`
+- **Transit**: `bus_station`, `subway_station`, `train_station`, `airport`
+- **Services**: `atm`, `bank`, `gas_station`, `post_office`
+- **Education**: `school`, `university`
 
-**Food & Drink**: `restaurant`, `cafe`, `bar`, `grocery_store`, `supermarket`
-
-**Transit**: `bus_station`, `subway_station`, `train_station`, `airport`
-
-**Services**: `atm`, `bank`, `gas_station`, `post_office`
-
-**Education**: `school`, `university`
+**Category Names** (searches all types in category):
+- `food_drink` - All restaurants, cafes, bars, etc.
+- `sports` - All gyms, fitness centers, stadiums, etc.
+- `health_wellness` - All hospitals, pharmacies, doctors, etc.
+- `shopping` - All stores, malls, supermarkets, etc.
+- `entertainment_recreation` - All parks, theaters, museums, etc.
+- And more! Use `list_place_types()` to see all categories.
 
 Full list: [Google Place Types](https://developers.google.com/maps/documentation/places/web-service/supported_types)
 
-## Optional Fields
+## Optional Fields & Output Format
+
+### Output Format
+
+All tools support a `format` parameter:
+- **`format="text"`** (default): Returns human-readable log format showing each place on its own line
+- **`format="json"`**: Returns structured JSON data for programmatic use
+
+Example log format output:
+```
+- 123 Main St (37.7749, -122.4194) "Starbucks" 250 meters [rating: 4.5]
+- 123 Main St (37.7749, -122.4194) "Blue Bottle Coffee" 450 meters [rating: 4.2]
+```
+
+### Optional Fields
 
 When using `nearby_search` or `batch_nearby_search`, you can specify which optional fields to include:
 
