@@ -240,6 +240,141 @@ def filter_place_fields(place: dict, include_fields: list[str] | None) -> dict:
 
 ---
 
+## Common Usage Patterns & Best Practices
+
+### Using batch_nearby_search Effectively
+
+**Example call structure**:
+
+```python
+# Mix of addresses and coordinates
+locations = [
+    {"address": "1600 Amphitheatre Parkway, Mountain View, CA"},
+    {"address": "1 Apple Park Way, Cupertino, CA"},
+    {"lat": 37.4849, "lng": -122.1477}
+]
+
+# Can be string or list
+feature_types = ["park", "grocery_store"]  # or just "park"
+
+# Call the tool
+result = await batch_nearby_search(
+    locations=locations,
+    feature_types=feature_types,
+    radius_meters=2000,
+    include_fields=["rating", "address"],
+    format="json"  # or "text"
+)
+```
+
+**Result structure** - Always organized by location first, then feature type:
+
+```python
+{
+  "results": [
+    {
+      "location_index": 0,
+      "coordinates": {"lat": 37.4220, "lng": -122.0841},
+      "features": {
+        "park": [{"name": "...", "distance_meters": 450, ...}],
+        "grocery_store": [...]
+      },
+      "status": "success"  # or "partial" or "error"
+    }
+  ],
+  "summary": {
+    "total_locations": 3,
+    "successful": 3,
+    "partial": 0,
+    "failed": 0,
+    "total_places_found": 15
+  }
+}
+```
+
+**Access pattern**: `result["results"][location_idx]["features"][feature_type][place_idx]`
+
+### Common Mistakes & Solutions
+
+**❌ WRONG**: Expecting results grouped by feature type first
+```python
+# This structure does NOT exist:
+result["results"]["park"][0]  # Wrong!
+```
+
+**✅ CORRECT**: Results are grouped by location first
+```python
+# Access like this:
+result["results"][0]["features"]["park"][0]  # Correct!
+```
+
+**❌ WRONG**: Assuming all feature types will always have results
+```python
+# This might not exist if no parks found:
+parks = result["results"][0]["features"]["park"]  # Might be []
+```
+
+**✅ CORRECT**: Check if feature type exists and has results
+```python
+features = result["results"][0]["features"]
+parks = features.get("park", [])
+if parks:
+    nearest_park = parks[0]  # Places are sorted by distance
+```
+
+### Validation & Error Handling
+
+**Invalid place types** - Tool now shows helpful validation messages:
+
+```
+Validation: 2 of 3 place types are valid. Proceeding with: park, grocery_store
+Invalid types:
+  - 'grocrey_store' is not valid. Did you mean: grocery_store, convenience_store, supermarket?
+```
+
+**Key points**:
+- Search PROCEEDS with valid types (doesn't fail completely)
+- Invalid types are skipped automatically
+- You get suggestions for corrections
+- Check warnings field in response for details
+
+**Partial failures** - Individual locations or feature types can fail:
+
+```python
+# Check status per location
+for location_result in result["results"]:
+    if location_result["status"] == "success":
+        # All feature types succeeded
+        pass
+    elif location_result["status"] == "partial":
+        # Some feature types succeeded, check "errors" field
+        errors = location_result.get("errors", [])
+    elif location_result["status"] == "error":
+        # All feature types failed
+        pass
+```
+
+### Limits & API Call Calculations
+
+**Hard limits** (enforced by Pydantic validation):
+- Max 20 locations per request
+- Max 10 feature types per request
+- Radius: 100m - 50km
+
+**API call calculation**:
+```
+Total API calls = num_locations × num_feature_types
+
+Examples:
+- 5 locations × 3 types = 15 API calls (~$0.48)
+- 10 locations × 5 types = 50 API calls (~$1.60)
+- 20 locations × 10 types = 200 API calls (~$6.40)
+```
+
+**Recommendation**: Keep batches under 50 total API calls for responsive performance.
+
+---
+
 ## Important Commands
 
 ### Setup

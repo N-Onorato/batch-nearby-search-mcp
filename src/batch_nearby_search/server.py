@@ -205,26 +205,40 @@ async def nearby_search(
         warnings = []
 
         if not validation["all_valid"]:
-            # Build helpful warning messages
+            # Build helpful warning messages for each invalid type
+            invalid_msgs = []
             for invalid_type in validation["invalid"]:
                 suggestions = validation["suggestions"].get(invalid_type, [])
                 if suggestions:
                     suggestion_str = ", ".join(suggestions[:3])
-                    warnings.append(
-                        f"'{invalid_type}' is not a valid place type. Did you mean: {suggestion_str}?"
+                    invalid_msgs.append(
+                        f"  - '{invalid_type}' is not valid. Did you mean: {suggestion_str}?"
                     )
                 else:
-                    warnings.append(
-                        f"'{invalid_type}' is not a valid place type. Use list_place_types() to see valid options."
+                    invalid_msgs.append(
+                        f"  - '{invalid_type}' is not valid. Use list_place_types() to see all options."
                     )
 
-        # Use only valid types for the search
-        valid_types = validation["valid"]
+            # Create a comprehensive validation summary
+            valid_types = validation["valid"]
+            if valid_types:
+                warnings.append(
+                    f"Validation: {len(valid_types)} of {len(feature_types)} place types are valid. "
+                    f"Proceeding with: {', '.join(valid_types)}\n"
+                    f"Invalid types:\n" + "\n".join(invalid_msgs)
+                )
+            else:
+                warnings.append(
+                    f"Validation: None of the {len(feature_types)} place types are valid.\n"
+                    f"Invalid types:\n" + "\n".join(invalid_msgs)
+                )
+        else:
+            valid_types = validation["valid"]
 
         if not valid_types:
             error_msg = "Error: No valid place types provided"
             if warnings:
-                error_msg += "\n" + "\n".join(warnings)
+                error_msg += "\n\n" + "\n".join(warnings)
 
             if format == "json":
                 return {
@@ -311,10 +325,12 @@ async def batch_nearby_search(
     """
     Find nearby places for MULTIPLE locations in parallel - OPTIMIZED for batch operations.
 
-    It searches for multiple feature types across multiple locations concurrently.
+    Searches for multiple feature types across multiple locations concurrently, making
+    all API calls in parallel. Results are organized by location, then by feature type.
 
     Args:
         locations: List of search origins (max 20) - provide address OR coordinates
+                  Mix of addresses and coordinates is supported
         feature_types: Place type(s) to search for. Can be a single string or list of strings.
                       Also accepts category names (e.g., "food_drink", "sports") to search all types in that category.
         radius_meters: Search radius in meters (100-50000, default 5000)
@@ -323,26 +339,69 @@ async def batch_nearby_search(
         format: Output format - "text" for human-readable (default), "json" for structured data
 
     Returns:
-        Human-readable log format (default) or JSON structured data
+        Results organized by location, then feature type. Each location has:
+        - location_index: Index in the original locations list
+        - coordinates: Resolved {lat, lng}
+        - features: Dict mapping feature_type -> list of places
+        - status: "success", "partial", or "error"
+
+        Summary includes total locations, successful/partial/failed counts, and total places found.
 
     Example:
         batch_nearby_search(
             locations=[
-                {"address": "123 Main St, City, State"},
-                {"address": "456 Oak Ave, City, State"},
-                {"lat": 37.4220, "lng": -122.0841}
+                {"address": "1600 Amphitheatre Parkway, Mountain View, CA"},
+                {"address": "1 Apple Park Way, Cupertino, CA"},
+                {"lat": 37.4849, "lng": -122.1477}
             ],
-            feature_types=["park", "grocery_store", "gym"],
-            include_fields=["rating", "address"]
+            feature_types=["park", "grocery_store"],
+            radius_meters=2000,
+            include_fields=["rating", "address"],
+            format="json"
         )
+
+        Returns structure:
+        {
+          "results": [
+            {
+              "location_index": 0,
+              "coordinates": {"lat": 37.4220, "lng": -122.0841},
+              "features": {
+                "park": [
+                  {"name": "Charleston Park", "distance_meters": 450, "rating": 4.5, ...}
+                ],
+                "grocery_store": [
+                  {"name": "Whole Foods", "distance_meters": 1200, "rating": 4.2, ...}
+                ]
+              },
+              "status": "success"
+            },
+            ... (more locations)
+          ],
+          "summary": {
+            "total_locations": 3,
+            "successful": 3,
+            "partial": 0,
+            "failed": 0,
+            "total_places_found": 15
+          }
+        }
 
     Available include_fields:
         rating, user_ratings_total, address, phone_number, website, price_level,
         opening_hours, types
 
+    Important limits:
+        - Max 20 locations per request (enforced by validation)
+        - Max 10 feature types per request (enforced by validation)
+        - Total API calls = num_locations × num_feature_types
+        - Example: 10 locations × 5 types = 50 parallel API calls
+
     Note:
         Use list_place_types() to discover valid place types before searching.
         Invalid types will return helpful suggestions for corrections.
+        Partial failures are supported - if one feature type fails at a location,
+        other feature types will still return results.
     """
     client = get_google_client()
 
@@ -355,26 +414,40 @@ async def batch_nearby_search(
     warnings = []
 
     if not validation["all_valid"]:
-        # Build helpful warning messages
+        # Build helpful warning messages for each invalid type
+        invalid_msgs = []
         for invalid_type in validation["invalid"]:
             suggestions = validation["suggestions"].get(invalid_type, [])
             if suggestions:
                 suggestion_str = ", ".join(suggestions[:3])
-                warnings.append(
-                    f"'{invalid_type}' is not a valid place type. Did you mean: {suggestion_str}?"
+                invalid_msgs.append(
+                    f"  - '{invalid_type}' is not valid. Did you mean: {suggestion_str}?"
                 )
             else:
-                warnings.append(
-                    f"'{invalid_type}' is not a valid place type. Use list_place_types() to see valid options."
+                invalid_msgs.append(
+                    f"  - '{invalid_type}' is not valid. Use list_place_types() to see all options."
                 )
 
-    # Use only valid types for the search
-    valid_types = validation["valid"]
+        # Create a comprehensive validation summary
+        valid_types = validation["valid"]
+        if valid_types:
+            warnings.append(
+                f"Validation: {len(valid_types)} of {len(feature_types)} place types are valid. "
+                f"Proceeding with: {', '.join(valid_types)}\n"
+                f"Invalid types:\n" + "\n".join(invalid_msgs)
+            )
+        else:
+            warnings.append(
+                f"Validation: None of the {len(feature_types)} place types are valid.\n"
+                f"Invalid types:\n" + "\n".join(invalid_msgs)
+            )
+    else:
+        valid_types = validation["valid"]
 
     if not valid_types:
         error_msg = "Error: No valid place types provided"
         if warnings:
-            error_msg += "\n" + "\n".join(warnings)
+            error_msg += "\n\n" + "\n".join(warnings)
 
         if format == "json":
             return {
