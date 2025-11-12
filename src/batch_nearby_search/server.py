@@ -30,6 +30,7 @@ from .models import (
 from .google_client import GooglePlacesClient
 from .cache import get_cache_stats
 from .utils import (
+    parse_string_or_array,
     filter_place_fields,
     format_batch_search_results,
     format_nearby_search_results,
@@ -196,9 +197,13 @@ async def nearby_search(
     client = get_google_client()
 
     try:
-        # Handle single string input
-        if isinstance(feature_types, str):
-            feature_types = [feature_types]
+        # Handle single string input or JSON-stringified array
+        feature_types = parse_string_or_array(feature_types)
+        if not feature_types:
+            feature_types = []
+
+        # Parse include_fields if it's a stringified array
+        include_fields = parse_string_or_array(include_fields)
 
         # Validate place types and collect warnings
         validation = validate_place_types(feature_types)
@@ -405,9 +410,24 @@ async def batch_nearby_search(
     """
     client = get_google_client()
 
-    # Handle single string input
-    if isinstance(feature_types, str):
-        feature_types = [feature_types]
+    # Handle single string input or JSON-stringified array
+    feature_types = parse_string_or_array(feature_types)
+    if not feature_types:
+        feature_types = []
+
+    # Parse include_fields if it's a stringified array
+    include_fields = parse_string_or_array(include_fields)
+
+    # Parse locations if it's a stringified array (for Location objects)
+    locations = parse_string_or_array(locations)
+    if not locations:
+        locations = []
+
+    # Convert dict locations to Location objects
+    locations = [
+        Location(**loc) if isinstance(loc, dict) else loc
+        for loc in locations
+    ]
 
     # Validate place types and collect warnings
     validation = validate_place_types(feature_types)
@@ -648,9 +668,8 @@ async def list_place_types(categories: list[str] | str | None = None) -> dict:
         # Returns: {"automotive": [...], "business": [...], ...}
     """
     if categories:
-        # Handle single string input
-        if isinstance(categories, str):
-            categories = [categories]
+        # Handle single string input or JSON-stringified array
+        categories = parse_string_or_array(categories)
 
         # Normalize category names
         categories = [cat.lower().strip() for cat in categories]
@@ -716,17 +735,10 @@ async def geocode(
     """
     client = get_google_client()
 
-    # Handle single string input or JSON stringified array
-    if isinstance(addresses, str):
-        # Check if it's a JSON stringified array
-        if addresses.strip().startswith('['):
-            try:
-                addresses = json.loads(addresses)
-            except json.JSONDecodeError:
-                # If parsing fails, treat as single address
-                addresses = [addresses]
-        else:
-            addresses = [addresses]
+    # Handle single string input or JSON-stringified array
+    addresses = parse_string_or_array(addresses)
+    if not addresses:
+        addresses = []
 
     results = []
     total_success = 0
@@ -833,21 +845,10 @@ async def reverse_geocode(
     """
     client = get_google_client()
 
-    # Handle single dict input or JSON stringified array
-    if isinstance(coordinates, str):
-        # Check if it's a JSON stringified array or object
-        try:
-            coordinates = json.loads(coordinates)
-        except json.JSONDecodeError:
-            # If parsing fails, return error
-            return {
-                "error": "Invalid coordinates format. Must be a dict or list of dicts with {lat, lng}",
-                "results": [],
-                "summary": {"total_coordinates": 0, "successful": 0, "failed": 0},
-            } if format == "json" else "Error: Invalid coordinates format"
-
-    if isinstance(coordinates, dict):
-        coordinates = [coordinates]
+    # Handle single dict input or JSON-stringified array
+    coordinates = parse_string_or_array(coordinates)
+    if not coordinates:
+        coordinates = []
 
     results = []
     total_success = 0

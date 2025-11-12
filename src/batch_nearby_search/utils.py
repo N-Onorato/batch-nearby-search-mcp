@@ -2,8 +2,71 @@
 Utility functions for the batch nearby search MCP server.
 """
 
+import json
 import math
-from typing import Any
+from typing import Any, TypeVar
+
+T = TypeVar('T')
+
+
+def parse_string_or_array(value: str | list[T] | T | None, item_type: type = str) -> list[T] | None:
+    """
+    Parse a parameter that can be a single item, list, or JSON-stringified array.
+
+    MCP clients may send arrays as JSON strings like '["item1", "item2"]'.
+    This function handles all cases:
+    - None -> None
+    - Single item -> [item]
+    - List -> list (unchanged)
+    - JSON string starting with '[' -> parsed list
+    - JSON string starting with '{' -> parsed dict (for objects)
+    - Other string -> [string]
+
+    Args:
+        value: Input value (string, list, single item, or None)
+        item_type: Expected type of items (for type hints, not enforced)
+
+    Returns:
+        List of items, or None if value was None
+
+    Examples:
+        parse_string_or_array("park") -> ["park"]
+        parse_string_or_array(["park", "gym"]) -> ["park", "gym"]
+        parse_string_or_array('["park", "gym"]') -> ["park", "gym"]
+        parse_string_or_array('[{"lat": 1, "lng": 2}]') -> [{"lat": 1, "lng": 2}]
+    """
+    if value is None:
+        return None
+
+    # Already a list - return as is
+    if isinstance(value, list):
+        return value
+
+    # String - could be JSON or plain string
+    if isinstance(value, str):
+        # Try to parse as JSON if it looks like JSON
+        stripped = value.strip()
+        if stripped.startswith('[') or stripped.startswith('{'):
+            try:
+                parsed = json.loads(stripped)
+                # If parsed to a dict, wrap in list
+                if isinstance(parsed, dict):
+                    return [parsed]
+                # If parsed to a list, return it
+                elif isinstance(parsed, list):
+                    return parsed
+                # If parsed to something else, wrap it
+                else:
+                    return [parsed]
+            except json.JSONDecodeError:
+                # Not valid JSON, treat as single string
+                return [value]
+        else:
+            # Plain string, not JSON
+            return [value]
+
+    # Single item of another type (e.g., dict) - wrap in list
+    return [value]
 
 
 def filter_place_fields(place: dict, include_fields: list[str] | None) -> dict:
