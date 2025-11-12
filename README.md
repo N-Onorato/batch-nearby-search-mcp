@@ -158,6 +158,102 @@ Include ratings and addresses.
 
 Claude will use `nearby_search` for this request.
 
+### Example 4: Batch Nearby Search (Detailed)
+
+This example shows the **exact structure** for calling `batch_nearby_search` directly, including how results are organized.
+
+**What you're searching:**
+- 3 locations (mix of addresses and coordinates)
+- 2 feature types per location (park, grocery_store)
+- Include optional fields (rating, address)
+
+**Tool call structure:**
+```json
+{
+  "locations": [
+    {"address": "1600 Amphitheatre Parkway, Mountain View, CA"},
+    {"address": "1 Apple Park Way, Cupertino, CA"},
+    {"lat": 37.4849, "lng": -122.1477}
+  ],
+  "feature_types": ["park", "grocery_store"],
+  "radius_meters": 2000,
+  "include_fields": ["rating", "address"],
+  "format": "json"
+}
+```
+
+**How results are organized:**
+
+Results are grouped **by location first, then by feature type**:
+
+```
+results[0]  (first location: "1600 Amphitheatre...")
+  ├── location_index: 0
+  ├── coordinates: {lat: 37.4220, lng: -122.0841}
+  ├── features:
+  │   ├── "park": [
+  │   │     {name: "Charleston Park", distance_meters: 450, rating: 4.5, ...},
+  │   │     {name: "Shoreline Park", distance_meters: 890, rating: 4.7, ...}
+  │   │   ]
+  │   └── "grocery_store": [
+  │         {name: "Whole Foods", distance_meters: 1200, rating: 4.2, ...}
+  │       ]
+  └── status: "success"
+
+results[1]  (second location: "1 Apple Park...")
+  ├── location_index: 1
+  ├── features:
+  │   ├── "park": [...]
+  │   └── "grocery_store": [...]
+  └── status: "success"
+
+results[2]  (third location: coordinates)
+  └── ... (same structure)
+```
+
+**Summary information:**
+```json
+{
+  "summary": {
+    "total_locations": 3,
+    "successful": 3,
+    "partial": 0,
+    "failed": 0,
+    "total_places_found": 15
+  }
+}
+```
+
+**Key points:**
+- Each location gets its own entry in `results[]`
+- Within each location, results are grouped by `feature_type`
+- Partial failures are supported - if one feature type fails, others still return
+- Total API calls = 3 locations × 2 feature types = 6 parallel requests
+
+**Text format output:**
+```
+=== Location 0: 1600 Amphitheatre Parkway, Mountain View, CA ===
+Coordinates: (37.4220, -122.0841)
+Status: success
+
+  Feature: park
+  - "Charleston Park" 450m [rating: 4.5, address: "123 Charleston Rd"]
+  - "Shoreline Park" 890m [rating: 4.7, address: "3070 N Shoreline Blvd"]
+
+  Feature: grocery_store
+  - "Whole Foods Market" 1200m [rating: 4.2, address: "2580 California St"]
+
+=== Location 1: 1 Apple Park Way, Cupertino, CA ===
+...
+```
+
+**Limits and gotchas:**
+- **Max 20 locations** per request (validation enforces this)
+- **Max 10 feature types** per request
+- API calls = locations × feature_types (e.g., 10 locations × 5 types = 50 calls)
+- Results can vary in size - some locations may have no results for certain types
+- Partial failures are handled gracefully - check `status` field per location
+
 ## Performance & Cost
 
 ### API Costs (as of 2024)
@@ -250,6 +346,157 @@ When using `nearby_search` or `batch_nearby_search`, you can specify which optio
 - `types` - List of place types
 
 **Default** (if not specified): Only `name`, `place_id`, and `distance_meters` are returned.
+
+## Understanding Tool Responses
+
+This section explains how each tool organizes its results so you know exactly what to expect.
+
+### `batch_nearby_search` Response Structure
+
+Results are organized **by location first, then by feature type within each location**:
+
+```json
+{
+  "results": [
+    {
+      "location_index": 0,
+      "location": {"address": "1600 Amphitheatre Parkway, Mountain View, CA"},
+      "coordinates": {"lat": 37.4220, "lng": -122.0841},
+      "features": {
+        "park": [
+          {"name": "Charleston Park", "distance_meters": 450, "place_id": "ChIJ...", ...},
+          {"name": "Shoreline Park", "distance_meters": 890, "place_id": "ChIJ...", ...}
+        ],
+        "grocery_store": [
+          {"name": "Whole Foods", "distance_meters": 1200, "place_id": "ChIJ...", ...}
+        ]
+      },
+      "status": "success"
+    },
+    {
+      "location_index": 1,
+      "location": {"lat": 37.4849, "lng": -122.1477},
+      "coordinates": {"lat": 37.4849, "lng": -122.1477},
+      "features": {
+        "park": [...],
+        "grocery_store": [...]
+      },
+      "status": "success"
+    }
+  ],
+  "summary": {
+    "total_locations": 2,
+    "successful": 2,
+    "partial": 0,
+    "failed": 0,
+    "total_places_found": 8
+  }
+}
+```
+
+**Key points:**
+- **Hierarchy**: `results[location_index].features[feature_type][place_index]`
+- **Status values**:
+  - `"success"`: All feature types returned results
+  - `"partial"`: Some feature types succeeded, some failed (see `errors` field)
+  - `"error"`: All feature types failed or geocoding failed
+- **Partial failures**: If searching for 3 feature types and 1 fails, you still get results for the other 2
+- **Empty results**: A feature type can have an empty array `[]` if no places were found
+
+### `nearby_search` Response Structure
+
+Similar to batch, but for a single location:
+
+```json
+{
+  "location": {"lat": 37.4220, "lng": -122.0841},
+  "features": {
+    "park": [
+      {"name": "Charleston Park", "distance_meters": 450, ...}
+    ],
+    "cafe": [
+      {"name": "Blue Bottle Coffee", "distance_meters": 320, ...}
+    ]
+  },
+  "summary": {
+    "total_feature_types": 2,
+    "total_places_found": 5,
+    "radius_meters": 5000
+  }
+}
+```
+
+**Key points:**
+- **Hierarchy**: `features[feature_type][place_index]`
+- Results are grouped by feature type
+- Each feature type is an array of places, sorted by distance
+
+### `distance_matrix` Response Structure
+
+```json
+{
+  "results": [
+    {
+      "origin": "1600 Amphitheatre Parkway, Mountain View, CA",
+      "destination": "1 Apple Park Way, Cupertino, CA",
+      "distance_meters": 15420,
+      "duration_seconds": 1260,
+      "status": "OK"
+    }
+  ],
+  "summary": {
+    "total_pairs": 1,
+    "mode": "driving",
+    "api_calls": 1
+  }
+}
+```
+
+**Key points:**
+- Each origin-destination pair gets its own result
+- 3 origins × 2 destinations = 6 results
+- `status` can be `"OK"`, `"NOT_FOUND"`, `"ZERO_RESULTS"`, etc.
+
+### `geocode` and `reverse_geocode` Response Structure
+
+```json
+{
+  "results": [
+    {
+      "address": "Times Square, NYC",
+      "formatted_address": "Manhattan, NY 10036, USA",
+      "lat": 40.7580,
+      "lng": -73.9855,
+      "status": "success"
+    }
+  ],
+  "summary": {
+    "total_addresses": 1,
+    "successful": 1,
+    "failed": 0
+  }
+}
+```
+
+**Key points:**
+- Supports batch geocoding (multiple addresses at once)
+- Each result has a `status` field: `"success"` or `"error"`
+- Failed geocoding still returns partial results for successful addresses
+
+### Validation Warnings
+
+When you provide invalid place types, you'll see a warning like this:
+
+```
+Validation: 2 of 3 place types are valid. Proceeding with: park, grocery_store
+Invalid types:
+  - 'grocrey_store' is not valid. Did you mean: grocery_store, convenience_store, supermarket?
+```
+
+**What this means:**
+- The search will **proceed** with the valid types (park, grocery_store)
+- Invalid types are skipped, but you get suggestions for corrections
+- No need to retry - you'll still get results for the valid types
 
 ## Troubleshooting
 
