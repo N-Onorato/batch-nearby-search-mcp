@@ -13,11 +13,44 @@ Parallel API calls + caching (50-80% cost reduction)
 
 ---
 
+## Context Bloat Optimization (IMPORTANT!)
+
+**This server implements progressive disclosure to reduce context usage by ~80-85%.**
+
+Traditional MCP servers load full documentation for all tools upfront, consuming thousands
+of tokens before any conversation starts. This server uses a different approach:
+
+**Minimal Tool Descriptions**:
+- Each tool has a ~30-50 token summary (vs. traditional 500-800 tokens)
+- Just enough info for the LLM to know WHEN to use the tool
+- Example: "Find nearby places for MULTIPLE locations in parallel..."
+
+**On-Demand Documentation**:
+- Use `get_tool_docs(tool_name, detail_level)` to fetch full docs when needed
+- Detail levels:
+  - `"usage"`: Parameter descriptions and return values (~200 tokens)
+  - `"examples"`: Code examples and common patterns (~300 tokens)
+  - `"full"`: Everything including tips, edge cases, API costs (~500 tokens)
+
+**Expected Savings**:
+- Before: ~5-6k tokens for all tool descriptions
+- After: ~600-800 tokens (summaries) + on-demand fetches
+- Reduction: 80-85% baseline context usage
+
+**Usage Pattern**:
+1. See tool summaries in initial context
+2. If you need details, call `get_tool_docs("batch_nearby_search", "usage")`
+3. If you need examples, call `get_tool_docs("batch_nearby_search", "examples")`
+4. If you need everything, call `get_tool_docs("batch_nearby_search", "full")`
+
+---
+
 ## Essential Files
 
 ```
 src/batch_nearby_search/
 ├── server.py          # Main MCP server, @mcp.tool decorators, entry point
+├── tool_docs.py       # Full tool documentation (loaded on-demand)
 ├── models.py          # Pydantic models (Location, PlaceResult, etc.)
 ├── google_client.py   # Google API wrapper (async + caching)
 ├── cache.py           # Caching utilities (LRU + TTL)
