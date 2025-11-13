@@ -3,13 +3,14 @@ Batch Nearby Search MCP Server
 
 FastMCP server providing optimized batch nearby searches using Google Places API.
 
-Tools:
-- distance_matrix: Calculate distances between multiple origin-destination pairs
-- nearby_search: Find nearby places from a single location
+Tools (use get_tool_docs(tool_name) for detailed documentation):
 - batch_nearby_search: Find nearby places from multiple locations in parallel (optimized)
+- nearby_search: Find nearby places from a single location
+- distance_matrix: Calculate distances between origin-destination pairs
 - list_place_types: Discover valid Google Place types by category
 - geocode: Convert addresses to coordinates (forward geocoding)
 - reverse_geocode: Convert coordinates to addresses (reverse geocoding)
+- get_tool_docs: Get detailed on-demand documentation for any tool
 """
 
 import asyncio
@@ -44,6 +45,7 @@ from .place_types import (
     validate_place_types,
     get_category_for_type,
 )
+from .tool_docs import get_tool_documentation, list_available_tools
 
 # Load environment variables
 load_dotenv()
@@ -71,28 +73,7 @@ async def distance_matrix(
     mode: Literal["driving", "walking", "bicycling", "transit"] = "driving",
     format: Literal["text", "json"] | None = None,
 ) -> str | dict:
-    """
-    Calculate distances and travel times between multiple origin-destination pairs.
-
-    Uses Google Distance Matrix API for fixed locations. Useful for comparing
-    commute times or distances to known destinations.
-
-    Args:
-        origins: List of origin addresses (e.g., ["123 Main St, City, State"])
-        destinations: List of destination addresses
-        mode: Travel mode - driving, walking, bicycling, or transit
-        format: Output format - "text" for human-readable (default), "json" for structured data
-
-    Returns:
-        Human-readable log format (default) or JSON structured data
-
-    Example:
-        distance_matrix(
-            origins=["1600 Amphitheatre Parkway, Mountain View, CA"],
-            destinations=["1 Apple Park Way, Cupertino, CA"],
-            mode="driving"
-        )
-    """
+    """Calculate distances and travel times between origin-destination pairs. Takes origins (addresses), destinations (addresses), mode (driving/walking/bicycling/transit). Use get_tool_docs('distance_matrix') for details."""
     client = get_google_client()
 
     try:
@@ -161,39 +142,7 @@ async def nearby_search(
     include_fields: list[str] | None = None,
     format: Literal["text", "json"] | None = None,
 ) -> str | dict:
-    """
-    Find nearby places of multiple types from a single location.
-
-    Searches for multiple feature types (e.g., park, gym, grocery store) from one location
-    in parallel. Results are cached to reduce API costs for repeated queries.
-
-    Args:
-        location: Search origin - provide either address OR coordinates
-        feature_types: Place type(s) to search for. Can be a single string or list of strings.
-                      Also accepts category names (e.g., "food_drink", "sports") to search all types in that category.
-        radius_meters: Search radius in meters (100-50000, default 5000)
-        max_results_per_type: Maximum results per feature type (1-10, default 3)
-        include_fields: Optional fields to include (rating, address, phone_number, etc.)
-        format: Output format - "text" for human-readable (default), "json" for structured data
-
-    Returns:
-        Human-readable log format (default) or JSON structured data
-
-    Example:
-        nearby_search(
-            location={"address": "123 Main St, City, State"},
-            feature_types=["park", "cafe", "gym"],
-            include_fields=["rating", "address"]
-        )
-
-    Available include_fields:
-        rating, user_ratings_total, address, phone_number, website, price_level,
-        opening_hours, types
-
-    Note:
-        Use list_place_types() to discover valid place types before searching.
-        Invalid types will return helpful suggestions for corrections.
-    """
+    """Find nearby places from a SINGLE location. Takes location (address or coords), feature_types, radius_meters (100-50k). Simpler than batch version. Use get_tool_docs('nearby_search') for details."""
     client = get_google_client()
 
     try:
@@ -327,87 +276,7 @@ async def batch_nearby_search(
     include_fields: list[str] | None = None,
     format: Literal["text", "json"] | None = None,
 ) -> str | dict:
-    """
-    Find nearby places for MULTIPLE locations in parallel - OPTIMIZED for batch operations.
-
-    Searches for multiple feature types across multiple locations concurrently, making
-    all API calls in parallel. Results are organized by location, then by feature type.
-
-    Args:
-        locations: List of search origins (max 20) - provide address OR coordinates
-                  Mix of addresses and coordinates is supported
-        feature_types: Place type(s) to search for. Can be a single string or list of strings.
-                      Also accepts category names (e.g., "food_drink", "sports") to search all types in that category.
-        radius_meters: Search radius in meters (100-50000, default 5000)
-        max_results_per_type: Maximum results per feature type (1-10, default 3)
-        include_fields: Optional fields to include (rating, address, phone_number, etc.)
-        format: Output format - "text" for human-readable (default), "json" for structured data
-
-    Returns:
-        Results organized by location, then feature type. Each location has:
-        - location_index: Index in the original locations list
-        - coordinates: Resolved {lat, lng}
-        - features: Dict mapping feature_type -> list of places
-        - status: "success", "partial", or "error"
-
-        Summary includes total locations, successful/partial/failed counts, and total places found.
-
-    Example:
-        batch_nearby_search(
-            locations=[
-                {"address": "1600 Amphitheatre Parkway, Mountain View, CA"},
-                {"address": "1 Apple Park Way, Cupertino, CA"},
-                {"lat": 37.4849, "lng": -122.1477}
-            ],
-            feature_types=["park", "grocery_store"],
-            radius_meters=2000,
-            include_fields=["rating", "address"],
-            format="json"
-        )
-
-        Returns structure:
-        {
-          "results": [
-            {
-              "location_index": 0,
-              "coordinates": {"lat": 37.4220, "lng": -122.0841},
-              "features": {
-                "park": [
-                  {"name": "Charleston Park", "distance_meters": 450, "rating": 4.5, ...}
-                ],
-                "grocery_store": [
-                  {"name": "Whole Foods", "distance_meters": 1200, "rating": 4.2, ...}
-                ]
-              },
-              "status": "success"
-            },
-            ... (more locations)
-          ],
-          "summary": {
-            "total_locations": 3,
-            "successful": 3,
-            "partial": 0,
-            "failed": 0,
-            "total_places_found": 15
-          }
-        }
-
-    Available include_fields:
-        rating, user_ratings_total, address, phone_number, website, price_level,
-        opening_hours, types
-
-    Important limits:
-        - Max 20 locations per request (enforced by validation)
-        - Max 10 feature types per request (enforced by validation)
-        - Total API calls = num_locations × num_feature_types
-        - Example: 10 locations × 5 types = 50 parallel API calls
-
-    Note:
-        Use list_place_types() to discover valid place types before searching.
-        Invalid types will return helpful suggestions for corrections.
-        Partial failures are supported - if one feature type fails at a location,
-        other feature types will still return results.
-    """
+    """Find nearby places for MULTIPLE locations in parallel (optimized batch operation). Takes locations (max 20, addresses or coords), feature_types, radius_meters (100-50k). Results organized by location then type. Use get_tool_docs('batch_nearby_search') for details."""
     client = get_google_client()
 
     # Handle single string input or JSON-stringified array
@@ -628,45 +497,7 @@ async def batch_nearby_search(
 
 @mcp.tool
 async def list_place_types(categories: list[str] | str | None = None) -> dict:
-    """
-    Get all valid Google Place types, optionally filtered by category.
-
-    Use this tool to discover valid place types before making search requests.
-    This helps avoid typos and ensures you're using the correct type names.
-
-    Args:
-        categories: Optional category or list of categories to filter by. Can be a single string or list of strings.
-                   Available categories:
-            - automotive (car dealers, gas stations, parking, etc.)
-            - business (corporate offices, farms, ranches)
-            - culture (museums, galleries, monuments, etc.)
-            - education (schools, libraries, universities)
-            - entertainment_recreation (parks, theaters, zoos, etc.)
-            - facilities (public baths, stables, etc.)
-            - finance (banks, ATMs, accounting)
-            - food_drink (restaurants, cafes, bars, etc.)
-            - government (city hall, police, post office, etc.)
-            - health_wellness (hospitals, pharmacies, doctors, etc.)
-            - lodging (hotels, hostels, campgrounds, etc.)
-            - places_of_worship (churches, temples, mosques, etc.)
-            - services (salons, lawyers, florists, etc.)
-            - shopping (stores, malls, supermarkets, etc.)
-            - sports (gyms, stadiums, golf courses, etc.)
-            - transportation (airports, train stations, bus stops, etc.)
-
-    Returns:
-        Dictionary of place types by category, or all types if no category specified
-
-    Example:
-        list_place_types(categories="food_drink")
-        # Returns: {"food_drink": ["restaurant", "cafe", "bar", ...]}
-
-        list_place_types(categories=["food_drink", "sports"])
-        # Returns: {"food_drink": [...], "sports": [...]}
-
-        list_place_types()
-        # Returns: {"automotive": [...], "business": [...], ...}
-    """
+    """Get valid Google Place types by category. Use before searching to discover valid types and avoid typos. Categories: automotive, food_drink, sports, etc. Use get_tool_docs('list_place_types') for all categories."""
     if categories:
         # Handle single string input or JSON-stringified array
         categories = parse_string_or_array(categories)
@@ -711,28 +542,7 @@ async def geocode(
     include_components: bool = False,
     format: Literal["text", "json"] | None = None,
 ) -> str | dict:
-    """
-    Convert addresses to coordinates (forward geocoding).
-
-    Useful for looking up coordinates for addresses you want to use in nearby searches
-    or distance calculations. Supports batch geocoding of multiple addresses in parallel.
-    Results are cached to reduce API costs for repeated queries.
-
-    Args:
-        addresses: Single address string or list of addresses to geocode
-        include_components: Include detailed address components (street, city, state, etc.)
-        format: Output format - "text" for human-readable (default), "json" for structured data
-
-    Returns:
-        Human-readable log format (default) or JSON structured data
-
-    Example:
-        geocode(addresses="1600 Amphitheatre Parkway, Mountain View, CA")
-        # Returns: - "1600 Amphitheatre..." -> "1600 Amphitheatre Pkwy, Mountain View, CA 94043, USA" (37.4220, -122.0841)
-
-        geocode(addresses=["Times Square, NYC", "Golden Gate Bridge, SF"])
-        # Batch geocodes both addresses in parallel
-    """
+    """Convert addresses to coordinates (forward geocoding). Takes addresses (single or list), returns lat/lng. Supports batch processing. Results cached. Use get_tool_docs('geocode') for details."""
     client = get_google_client()
 
     # Handle single string input or JSON-stringified array
@@ -819,30 +629,7 @@ async def reverse_geocode(
     include_components: bool = False,
     format: Literal["text", "json"] | None = None,
 ) -> str | dict:
-    """
-    Convert coordinates to addresses (reverse geocoding).
-
-    Useful for finding addresses for coordinates from GPS, maps, or other sources.
-    Supports batch reverse geocoding. Results are cached to reduce API costs.
-
-    Args:
-        coordinates: Single coordinate dict or list of dicts with {lat, lng}
-        include_components: Include detailed address components (street, city, state, etc.)
-        format: Output format - "text" for human-readable (default), "json" for structured data
-
-    Returns:
-        Human-readable log format (default) or JSON structured data
-
-    Example:
-        reverse_geocode(coordinates={"lat": 37.4220, "lng": -122.0841})
-        # Returns: - (37.4220, -122.0841) -> "1600 Amphitheatre Pkwy, Mountain View, CA 94043, USA"
-
-        reverse_geocode(coordinates=[
-            {"lat": 37.4220, "lng": -122.0841},
-            {"lat": 40.7580, "lng": -73.9855}
-        ])
-        # Batch reverse geocodes both locations in parallel
-    """
+    """Convert coordinates to addresses (reverse geocoding). Takes coordinates {lat, lng} (single or list), returns addresses. Supports batch processing. Results cached. Use get_tool_docs('reverse_geocode') for details."""
     client = get_google_client()
 
     # Handle single dict input or JSON-stringified array
@@ -948,6 +735,27 @@ async def reverse_geocode(
             return error_data
         else:
             return f"Error: {str(e)}"
+
+
+@mcp.tool
+async def get_tool_docs(
+    tool_name: str,
+    detail_level: Literal["usage", "examples", "full"] = "usage",
+) -> str:
+    """
+    Get detailed documentation for a specific tool on-demand.
+
+    Reduces context bloat by loading full docs only when needed. Use this to get
+    comprehensive parameter descriptions, examples, and usage patterns for any tool.
+
+    Args:
+        tool_name: Name of the tool (e.g., "batch_nearby_search", "geocode")
+        detail_level: Level of detail - "usage" (parameters & return), "examples" (code samples), or "full" (everything)
+
+    Returns:
+        Formatted documentation at the requested detail level
+    """
+    return get_tool_documentation(tool_name, detail_level)
 
 
 def main():
