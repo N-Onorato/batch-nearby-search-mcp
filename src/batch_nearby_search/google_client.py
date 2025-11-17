@@ -55,6 +55,9 @@ class GooglePlacesClient:
         # New Places API endpoint
         self.places_api_url = "https://places.googleapis.com/v1/places:searchNearby"
 
+        # Routes API endpoint
+        self.routes_api_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+
     async def _rate_limited_call(self, func, *args, **kwargs):
         """
         Execute a function with rate limiting.
@@ -365,6 +368,139 @@ class GooglePlacesClient:
 
         except (ApiError, Timeout, TransportError) as e:
             raise ValueError(f"Distance Matrix API error: {str(e)}")
+
+    async def optimize_route(
+        self,
+        origin: dict,
+        destination: dict,
+        waypoints: list[dict],
+        travel_mode: str = "DRIVE",
+        optimize_order: bool = True,
+    ) -> dict:
+        """
+        Compute an optimized route with multiple waypoints using Google Routes API.
+
+        Args:
+            origin: Origin coordinates {lat, lng}
+            destination: Destination coordinates {lat, lng}
+            waypoints: List of waypoint coordinates [{lat, lng}, ...]
+            travel_mode: Travel mode (DRIVE, BICYCLE, WALK, TWO_WHEELER)
+            optimize_order: Whether to optimize waypoint order
+
+        Returns:
+            Dict with route information including optimized waypoint order, distance, duration, and polyline
+
+        Raises:
+            ValueError: If route computation fails
+        """
+        try:
+            async with self.semaphore:
+                # Build waypoints for API request
+                intermediate_waypoints = []
+                for waypoint in waypoints:
+                    intermediate_waypoints.append({
+                        "location": {
+                            "latLng": {
+                                "latitude": waypoint["lat"],
+                                "longitude": waypoint["lng"]
+                            }
+                        },
+                        "via": False  # Must be False for optimization
+                    })
+
+                # Build request body
+                request_body = {
+                    "origin": {
+                        "location": {
+                            "latLng": {
+                                "latitude": origin["lat"],
+                                "longitude": origin["lng"]
+                            }
+                        }
+                    },
+                    "destination": {
+                        "location": {
+                            "latLng": {
+                                "latitude": destination["lat"],
+                                "longitude": destination["lng"]
+                            }
+                        }
+                    },
+                    "intermediates": intermediate_waypoints,
+                    "travelMode": travel_mode,
+                    "optimizeWaypointOrder": optimize_order,
+                    "computeAlternativeRoutes": False,
+                    "routeModifiers": {
+                        "avoidTolls": False,
+                        "avoidHighways": False,
+                        "avoidFerries": False
+                    },
+                    "languageCode": "en-US",
+                    "units": "METRIC"
+                }
+
+                # Set headers - include optimizedIntermediateWaypointIndex in field mask if optimizing
+                field_mask_parts = [
+                    "routes.distanceMeters",
+                    "routes.duration",
+                    "routes.polyline.encodedPolyline"
+                ]
+
+                if optimize_order:
+                    field_mask_parts.append("routes.optimizedIntermediateWaypointIndex")
+
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": self.api_key,
+                    "X-Goog-FieldMask": ",".join(field_mask_parts)
+                }
+
+                # Make POST request to Routes API
+                response = await self.http_client.post(
+                    self.routes_api_url,
+                    json=request_body,
+                    headers=headers,
+                    timeout=30.0
+                )
+
+                self.api_call_count += 1
+
+                # Check for errors
+                if response.status_code != 200:
+                    error_detail = response.text
+                    raise ValueError(f"Routes API error ({response.status_code}): {error_detail}")
+
+                result = response.json()
+                routes = result.get("routes", [])
+
+                if not routes:
+                    raise ValueError("No routes found")
+
+                # Get the first (best) route
+                route = routes[0]
+
+                # Extract optimized waypoint order if available
+                optimized_order = None
+                if optimize_order and "optimizedIntermediateWaypointIndex" in route:
+                    optimized_order = route["optimizedIntermediateWaypointIndex"]
+
+                # Parse duration (e.g., "1234s" -> 1234)
+                duration_str = route.get("duration", "0s")
+                duration_seconds = int(duration_str.rstrip("s"))
+
+                return {
+                    "total_distance_meters": route.get("distanceMeters", 0),
+                    "total_duration_seconds": duration_seconds,
+                    "polyline": route.get("polyline", {}).get("encodedPolyline"),
+                    "optimized_waypoint_order": optimized_order,
+                    "travel_mode": travel_mode,
+                    "optimized": optimize_order
+                }
+
+        except httpx.HTTPError as e:
+            raise ValueError(f"Routes API HTTP error: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Routes API error: {str(e)}")
 
     def get_api_call_count(self) -> int:
         """Get the number of API calls made in this session"""

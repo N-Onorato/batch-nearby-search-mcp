@@ -373,6 +373,121 @@ Examples:
 
 **Recommendation**: Keep batches under 50 total API calls for responsive performance.
 
+### Using optimize_route for Route Optimization
+
+**Finding the best route through multiple stops**:
+
+```python
+# Basic route optimization
+result = await optimize_route(
+    origin={"address": "San Francisco, CA"},
+    destination={"address": "Los Angeles, CA"},
+    waypoints=[
+        {"address": "Palo Alto, CA"},
+        {"address": "San Jose, CA"},
+        {"address": "Santa Barbara, CA"}
+    ],
+    travel_mode="DRIVE",
+    optimize_order=True,  # Let Google reorder waypoints for efficiency
+    format="json"
+)
+```
+
+**Response structure**:
+
+```python
+{
+  "origin": {
+    "lat": 37.7749,
+    "lng": -122.4194,
+    "address": "San Francisco, CA, USA"
+  },
+  "destination": {
+    "lat": 34.0522,
+    "lng": -118.2437,
+    "address": "Los Angeles, CA, USA"
+  },
+  "waypoints": [
+    {
+      "original_index": 0,      # Position in your input
+      "optimized_index": 0,     # Position in optimized route
+      "lat": 37.4419,
+      "lng": -122.1430,
+      "address": "Palo Alto, CA, USA"
+    },
+    # ... more waypoints
+  ],
+  "optimized_waypoint_order": [0, 1, 2],  # Reordered indices (or null if not optimized)
+  "total_distance_meters": 550000,
+  "total_duration_seconds": 19800,        # ~5.5 hours
+  "polyline": "encoded_polyline_string",  # For map visualization
+  "travel_mode": "DRIVE",
+  "optimized": true
+}
+```
+
+**Travel modes available**:
+- `"DRIVE"` - Car/driving (default)
+- `"BICYCLE"` - Bicycling
+- `"WALK"` - Walking
+- `"TWO_WHEELER"` - Motorcycles/scooters
+
+**Key limits**:
+- Minimum: 1 waypoint
+- Maximum: 25 waypoints
+- Origin and destination are required and fixed
+- Only intermediate waypoints get reordered
+
+**API costs**:
+- Route optimization uses **Compute Routes Pro SKU** (higher cost)
+- ~$0.02 per request with optimization enabled
+- Non-optimized routes use standard Compute Routes SKU (~$0.005)
+
+**Common use cases**:
+```python
+# Delivery route optimization
+optimize_route(
+    origin={"address": "Warehouse, 123 Main St"},
+    destination={"address": "Warehouse, 123 Main St"},  # Return to start
+    waypoints=[
+        {"address": "Customer 1"},
+        {"address": "Customer 2"},
+        {"address": "Customer 3"}
+    ]
+)
+
+# Tourist itinerary
+optimize_route(
+    origin={"address": "Hotel"},
+    destination={"address": "Hotel"},
+    waypoints=[
+        {"address": "Golden Gate Bridge"},
+        {"address": "Alcatraz Island"},
+        {"address": "Fisherman's Wharf"}
+    ],
+    travel_mode="WALK"
+)
+
+# Field service appointments
+optimize_route(
+    origin={"lat": 37.7749, "lng": -122.4194},
+    destination={"lat": 37.7749, "lng": -122.4194},
+    waypoints=[
+        {"address": "Appointment 1"},
+        {"address": "Appointment 2"},
+        {"address": "Appointment 3"}
+    ],
+    optimize_order=True
+)
+```
+
+**Important notes**:
+- Optimization considers travel time, distance, and number of turns
+- Cannot use with `via` waypoints (pass-through points)
+- Cannot combine with TRAFFIC_AWARE_OPTIMAL routing preference
+- The `optimized_waypoint_order` array shows which original waypoint goes in which position
+- Example: `[2, 0, 1]` means: visit waypoint #2 first, then #0, then #1
+
 ---
 
 ## Important Commands
@@ -457,8 +572,9 @@ After updating config:
 Enable these in Google Cloud Console:
 
 1. **Places API (New)** - For nearby searches
-2. **Distance Matrix API** - For distance calculations
-3. **Geocoding API** - For address → coordinates
+2. **Routes API** - For route optimization and directions
+3. **Distance Matrix API** - For distance calculations
+4. **Geocoding API** - For address → coordinates
 
 ### Place Types (feature_types)
 

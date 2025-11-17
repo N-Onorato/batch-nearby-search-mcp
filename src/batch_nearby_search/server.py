@@ -10,6 +10,7 @@ Tools:
 - list_place_types: Discover valid Google Place types by category
 - geocode: Convert addresses to coordinates (forward geocoding)
 - reverse_geocode: Convert coordinates to addresses (reverse geocoding)
+- optimize_route: Find optimized route between multiple locations
 """
 
 import asyncio
@@ -948,6 +949,230 @@ async def reverse_geocode(
             return error_data
         else:
             return f"Error: {str(e)}"
+
+
+@mcp.tool
+async def optimize_route(
+    origin: Location,
+    destination: Location,
+    waypoints: list[Location],
+    travel_mode: Literal["DRIVE", "BICYCLE", "WALK", "TWO_WHEELER"] = "DRIVE",
+    optimize_order: bool = True,
+    format: Literal["text", "json"] | None = None,
+) -> str | dict:
+    """
+    Find an optimized route between multiple locations.
+
+    Calculates the best route from origin to destination through multiple waypoints,
+    optionally optimizing the order of waypoints for minimum travel time and distance.
+    Uses Google Routes API with advanced route optimization.
+
+    Args:
+        origin: Starting location (address or coordinates)
+        destination: Ending location (address or coordinates)
+        waypoints: List of intermediate stops (1-25 waypoints)
+        travel_mode: Travel mode - DRIVE (default), BICYCLE, WALK, or TWO_WHEELER
+        optimize_order: Optimize waypoint order for efficiency (default True)
+        format: Output format - "text" for human-readable (default), "json" for structured data
+
+    Returns:
+        Optimized route with waypoint order, total distance, duration, and encoded polyline
+
+    Example:
+        optimize_route(
+            origin={"address": "San Francisco, CA"},
+            destination={"address": "Los Angeles, CA"},
+            waypoints=[
+                {"address": "Palo Alto, CA"},
+                {"address": "San Jose, CA"},
+                {"address": "Santa Barbara, CA"}
+            ],
+            travel_mode="DRIVE",
+            optimize_order=True
+        )
+
+        Returns:
+        {
+          "origin": {"lat": 37.7749, "lng": -122.4194},
+          "destination": {"lat": 34.0522, "lng": -118.2437},
+          "waypoints": [
+            {"original_index": 0, "optimized_index": 0, "lat": 37.4419, "lng": -122.1430, "address": "Palo Alto, CA"},
+            {"original_index": 1, "optimized_index": 1, "lat": 37.3382, "lng": -121.8863, "address": "San Jose, CA"},
+            {"original_index": 2, "optimized_index": 2, "lat": 34.4208, "lng": -119.6982, "address": "Santa Barbara, CA"}
+          ],
+          "optimized_waypoint_order": [0, 1, 2],
+          "total_distance_meters": 550000,
+          "total_duration_seconds": 19800,
+          "travel_mode": "DRIVE",
+          "optimized": true
+        }
+
+    Important limits:
+        - Minimum 1 waypoint, maximum 25 waypoints
+        - Waypoint optimization uses Routes API Compute Routes Pro SKU (higher cost)
+        - Returns encoded polyline for route visualization
+
+    Notes:
+        - Waypoint optimization considers travel time, distance, and number of turns
+        - Cannot use TRAFFIC_AWARE_OPTIMAL routing preference with optimization
+        - All waypoints must be stopovers (not pass-through via points)
+        - The optimized_waypoint_order shows the reordered indices of original waypoints
+    """
+    client = get_google_client()
+
+    # Parse waypoints if it's a stringified array
+    waypoints = parse_string_or_array(waypoints)
+    if not waypoints:
+        error_msg = "Error: At least 1 waypoint required"
+        if format == "json":
+            return {"error": error_msg}
+        else:
+            return error_msg
+
+    # Convert dict waypoints to Location objects
+    waypoints = [
+        Location(**wp) if isinstance(wp, dict) else wp
+        for wp in waypoints
+    ]
+
+    try:
+        # Geocode origin
+        if origin.address:
+            origin_coords = await client.geocode_location(origin.address)
+            origin_lat, origin_lng = origin_coords["lat"], origin_coords["lng"]
+            origin_formatted = origin_coords["formatted_address"]
+        else:
+            origin_lat, origin_lng = origin.lat, origin.lng
+            origin_formatted = f"({origin_lat}, {origin_lng})"
+
+        # Geocode destination
+        if destination.address:
+            dest_coords = await client.geocode_location(destination.address)
+            dest_lat, dest_lng = dest_coords["lat"], dest_coords["lng"]
+            dest_formatted = dest_coords["formatted_address"]
+        else:
+            dest_lat, dest_lng = destination.lat, destination.lng
+            dest_formatted = f"({dest_lat}, {dest_lng})"
+
+        # Geocode all waypoints in parallel
+        waypoint_tasks = []
+        for waypoint in waypoints:
+            if waypoint.address:
+                waypoint_tasks.append(client.geocode_location(waypoint.address))
+            else:
+                waypoint_tasks.append(
+                    asyncio.sleep(0, result={"lat": waypoint.lat, "lng": waypoint.lng, "formatted_address": f"({waypoint.lat}, {waypoint.lng})"})
+                )
+
+        waypoint_results = await asyncio.gather(*waypoint_tasks, return_exceptions=True)
+
+        # Build waypoint coordinate list
+        waypoint_coords = []
+        waypoint_details = []
+        for i, result in enumerate(waypoint_results):
+            if isinstance(result, Exception):
+                error_msg = f"Error geocoding waypoint {i}: {str(result)}"
+                if format == "json":
+                    return {"error": error_msg}
+                else:
+                    return error_msg
+
+            waypoint_coords.append({"lat": result["lat"], "lng": result["lng"]})
+            waypoint_details.append({
+                "original_index": i,
+                "lat": result["lat"],
+                "lng": result["lng"],
+                "address": result.get("formatted_address", f"({result['lat']}, {result['lng']})")
+            })
+
+        # Call route optimization API
+        route_result = await client.optimize_route(
+            origin={"lat": origin_lat, "lng": origin_lng},
+            destination={"lat": dest_lat, "lng": dest_lng},
+            waypoints=waypoint_coords,
+            travel_mode=travel_mode,
+            optimize_order=optimize_order
+        )
+
+        # Update waypoint details with optimized indices
+        if route_result["optimized_waypoint_order"]:
+            optimized_order = route_result["optimized_waypoint_order"]
+            for i, original_idx in enumerate(optimized_order):
+                waypoint_details[original_idx]["optimized_index"] = i
+        else:
+            # No optimization, indices remain the same
+            for i, detail in enumerate(waypoint_details):
+                detail["optimized_index"] = i
+
+        # Build structured response
+        structured_data = {
+            "origin": {
+                "lat": origin_lat,
+                "lng": origin_lng,
+                "address": origin_formatted
+            },
+            "destination": {
+                "lat": dest_lat,
+                "lng": dest_lng,
+                "address": dest_formatted
+            },
+            "waypoints": waypoint_details,
+            "optimized_waypoint_order": route_result["optimized_waypoint_order"],
+            "total_distance_meters": route_result["total_distance_meters"],
+            "total_duration_seconds": route_result["total_duration_seconds"],
+            "polyline": route_result["polyline"],
+            "travel_mode": route_result["travel_mode"],
+            "optimized": route_result["optimized"]
+        }
+
+        # Return based on format
+        if format == "json":
+            return structured_data
+        else:
+            # Text mode (default): return human-readable format
+            output_lines = []
+            output_lines.append("=== OPTIMIZED ROUTE ===\n")
+            output_lines.append(f"Origin: {origin_formatted}")
+            output_lines.append(f"Destination: {dest_formatted}")
+            output_lines.append(f"Travel Mode: {travel_mode}")
+            output_lines.append(f"Optimization: {'Enabled' if optimize_order else 'Disabled'}\n")
+
+            # Display waypoints in optimized order
+            if route_result["optimized_waypoint_order"]:
+                output_lines.append("Waypoints (optimized order):")
+                for optimized_idx in range(len(waypoint_details)):
+                    # Find waypoint with this optimized_index
+                    for detail in waypoint_details:
+                        if detail["optimized_index"] == optimized_idx:
+                            output_lines.append(
+                                f"  {optimized_idx + 1}. {detail['address']} "
+                                f"(originally #{detail['original_index'] + 1})"
+                            )
+                            break
+            else:
+                output_lines.append("Waypoints (original order):")
+                for i, detail in enumerate(waypoint_details):
+                    output_lines.append(f"  {i + 1}. {detail['address']}")
+
+            # Display summary
+            distance_km = route_result["total_distance_meters"] / 1000
+            duration_hours = route_result["total_duration_seconds"] / 3600
+            duration_minutes = (route_result["total_duration_seconds"] % 3600) / 60
+
+            output_lines.append(f"\nTotal Distance: {distance_km:.2f} km ({route_result['total_distance_meters']} meters)")
+            output_lines.append(f"Total Duration: {int(duration_hours)}h {int(duration_minutes)}m ({route_result['total_duration_seconds']} seconds)")
+
+            if route_result["polyline"]:
+                output_lines.append(f"\nEncoded Polyline: {route_result['polyline'][:50]}...")
+
+            return "\n".join(output_lines)
+
+    except Exception as e:
+        error_msg = f"Error: {str(e)}"
+        if format == "json":
+            return {"error": str(e)}
+        else:
+            return error_msg
 
 
 def main():
