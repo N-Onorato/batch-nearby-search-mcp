@@ -228,3 +228,50 @@ COMMON_PLACE_TYPES = [
     "shopping_mall",
     "stadium",
 ]
+
+
+class RouteOptimizationRequest(BaseModel):
+    """Request model for route optimization"""
+
+    origin: Location = Field(..., description="Starting location (address or coordinates)")
+    destination: Location = Field(..., description="Ending location (address or coordinates)")
+    waypoints: list[Location] = Field(
+        ..., min_length=1, max_length=25, description="Intermediate stops (max 25)"
+    )
+    optimize_order: bool = Field(True, description="Optimize waypoint order for efficiency")
+    travel_mode: Literal["DRIVE", "BICYCLE", "WALK", "TWO_WHEELER"] = Field(
+        "DRIVE", description="Travel mode for route calculation"
+    )
+
+
+class Waypoint(BaseModel):
+    """Waypoint information in a route"""
+
+    location: Location = Field(..., description="Waypoint location")
+    original_index: int | None = Field(None, description="Original index in request")
+    optimized_index: int | None = Field(None, description="Optimized position in route")
+
+
+class RouteSegment(BaseModel):
+    """Segment of a route between two points"""
+
+    start_location: dict = Field(..., description="Starting point {lat, lng}")
+    end_location: dict = Field(..., description="Ending point {lat, lng}")
+    distance_meters: int = Field(..., description="Distance in meters")
+    duration_seconds: int = Field(..., description="Duration in seconds")
+
+
+class OptimizedRoute(BaseModel):
+    """Complete optimized route result"""
+
+    origin: dict = Field(..., description="Origin coordinates {lat, lng}")
+    destination: dict = Field(..., description="Destination coordinates {lat, lng}")
+    waypoints: list[dict] = Field(..., description="Waypoint details with original/optimized indices")
+    optimized_waypoint_order: list[int] | None = Field(
+        None, description="Optimized order indices (if optimization enabled)"
+    )
+    total_distance_meters: int = Field(..., description="Total route distance in meters")
+    total_duration_seconds: int = Field(..., description="Total route duration in seconds")
+    polyline: str | None = Field(None, description="Encoded polyline for route visualization")
+    travel_mode: str = Field(..., description="Travel mode used")
+    optimized: bool = Field(..., description="Whether waypoint optimization was applied")
